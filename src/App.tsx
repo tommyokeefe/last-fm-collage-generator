@@ -6,12 +6,14 @@ import {
   buildTimeRange,
   fetchRecentTracks,
   formatMetric,
+  getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
   sortAlbums,
 } from "./lib/lastfm";
 import type {
   AlbumEntry,
   ExportRenderOptions,
+  FetchProgressState,
   GridSize,
   PreviewGridStyle,
   RankingMode,
@@ -31,7 +33,16 @@ const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }
   { value: "12m", label: "Last 365 days" },
   { value: "overall", label: "Overall" },
 ];
-const GRID_OPTIONS: ReadonlyArray<GridSize> = ["3x3", "4x4", "5x5", "6x6"];
+const GRID_OPTIONS: ReadonlyArray<GridSize> = [
+  "3x3",
+  "4x4",
+  "5x5",
+  "6x6",
+  "7x7",
+  "8x8",
+  "9x9",
+  "10x10",
+];
 const DEFAULT_SETTINGS: Settings = {
   username: "",
   timeRange: "1m",
@@ -141,19 +152,36 @@ function App() {
       return;
     }
 
+    const timeRange = buildTimeRange(settings.timeRange);
+    const isListeningTimeMode = settings.rankingMode === "listening-time";
+
     setIsBusy(true);
     setStatus({
       tone: "info",
-      message: "Fetching listening history from Last.fm...",
+      message: isListeningTimeMode
+        ? "Step 1 of 2: Fetching listening history from Last.fm..."
+        : "Fetching listening history from Last.fm...",
     });
 
     try {
-      const timeRange = buildTimeRange(settings.timeRange);
       const recentTracks = await fetchRecentTracks(
         settings.username.trim(),
         timeRange,
         apiKey,
-        (message) => setStatus({ tone: "info", message }),
+        (message) =>
+          setStatus((current) => ({
+            tone: "info",
+            message: isListeningTimeMode ? `Step 1 of 2: ${message}` : message,
+            progress: current.progress,
+          })),
+        (progress) =>
+          setStatus({
+            tone: "info",
+            message: isListeningTimeMode
+              ? `Step 1 of 2: Fetching listening history from Last.fm... page ${progress.completed} of ${progress.total}`
+              : `Fetching listening history from Last.fm... page ${progress.completed} of ${progress.total}`,
+            progress,
+          }),
       );
       const aggregated = aggregateAlbums(recentTracks.items);
 
@@ -170,11 +198,26 @@ function App() {
       }
 
       let durationGaps = 0;
-      if (settings.rankingMode === "listening-time") {
+      if (isListeningTimeMode) {
+        setStatus({
+          tone: "info",
+          message: "Step 2 of 2: Fetching track durations from Last.fm...",
+        });
         durationGaps = await hydrateApproximateListeningTimes(
           aggregated,
           apiKey,
-          (message) => setStatus({ tone: "info", message }),
+          (message) =>
+            setStatus((current) => ({
+              tone: "info",
+              message: `Step 2 of 2: ${message}`,
+              progress: current.progress,
+            })),
+          (progress) =>
+            setStatus({
+              tone: "info",
+              message: `Step 2 of 2: Fetching track durations from Last.fm... ${progress.completed} of ${progress.total}`,
+              progress,
+            }),
         );
       }
 
@@ -201,13 +244,17 @@ function App() {
       });
     } catch (error) {
       console.error(error);
+      const resumeState = getRecentTracksResumeState(settings.username.trim(), timeRange);
+      const baseMessage = error instanceof Error ? error.message : "Something went wrong.";
       setRenderedAlbums([]);
       setNextExportPreview(null);
       setSummary(null);
       setResultsCopy("Your collage will appear here after generation.");
       setStatus({
         tone: "error",
-        message: error instanceof Error ? error.message : "Something went wrong.",
+        message: resumeState
+          ? `${baseMessage} Retry Generate to resume from page ${resumeState.nextPage} of ${resumeState.totalPages}.`
+          : baseMessage,
       });
     } finally {
       setIsBusy(false);
@@ -480,7 +527,36 @@ function StatusBanner({ status }: StatusBannerProps) {
     .filter(Boolean)
     .join(" ");
 
-  return <div className={className}>{status.message}</div>;
+  return (
+    <div className={className}>
+      <div className="status-message">{status.message}</div>
+      {status.progress ? <FetchProgress progress={status.progress} /> : null}
+    </div>
+  );
+}
+
+interface FetchProgressProps {
+  progress: FetchProgressState;
+}
+
+function FetchProgress({ progress }: FetchProgressProps) {
+  return (
+    <div className="status-progress">
+      <div className="status-progress-meta">
+        <span>
+          {progress.unitLabel} {progress.completed} of {progress.total}
+        </span>
+        <span>
+          {progress.completed === 0 && progress.total > 0
+            ? "ETA calculating..."
+            : `ETA ${formatEta(progress.estimatedRemainingMs)}`}
+        </span>
+      </div>
+      <progress value={progress.completed} max={progress.total}>
+        {progress.completed} of {progress.total}
+      </progress>
+    </div>
+  );
 }
 
 interface SummaryPanelProps {
@@ -653,6 +729,17 @@ function loadSettings(): Settings {
 function getApiKey(): string {
   const value: unknown = import.meta.env.VITE_LASTFM_API_KEY;
   return typeof value === "string" ? value.trim() : "";
+}
+
+function formatEta(milliseconds: number): string {
+  const totalSeconds = Math.max(Math.round(milliseconds / 1000), 0);
+  if (totalSeconds < 60) {
+    return totalSeconds <= 1 ? "about 1 sec" : `about ${totalSeconds} sec`;
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds === 0 ? `about ${minutes} min` : `about ${minutes} min ${seconds} sec`;
 }
 
 async function tryRenderExportPreview(

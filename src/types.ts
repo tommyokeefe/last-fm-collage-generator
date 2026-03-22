@@ -3,7 +3,15 @@ import type { CSSProperties } from "react";
 export type RankingMode = "plays" | "listening-time";
 export type StatusTone = "info" | "success" | "error";
 export type TimeRangeValue = "7d" | "1m" | "3m" | "6m" | "12m" | "overall";
-export type GridSize = "3x3" | "4x4" | "5x5" | "6x6";
+export type GridSize =
+  | "3x3"
+  | "4x4"
+  | "5x5"
+  | "6x6"
+  | "7x7"
+  | "8x8"
+  | "9x9"
+  | "10x10";
 
 export interface Settings {
   username: string;
@@ -17,6 +25,7 @@ export interface Settings {
 export interface StatusState {
   tone: StatusTone;
   message: string;
+  progress?: FetchProgressState;
 }
 
 export interface SummaryState {
@@ -97,6 +106,18 @@ export interface LastFmErrorResponse {
 export interface RecentTracksResult {
   items: LastFmRecentTrack[];
   pagesFetched: number;
+}
+
+export interface RecentTracksResumeState {
+  nextPage: number;
+  totalPages: number;
+}
+
+export interface FetchProgressState {
+  completed: number;
+  total: number;
+  estimatedRemainingMs: number;
+  unitLabel: string;
 }
 
 export type PreviewGridStyle = CSSProperties & {

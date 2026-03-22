@@ -1,6 +1,7 @@
 import type {
   AlbumEntry,
   AlbumTrack,
+  FetchProgressState,
   LastFmErrorResponse,
   LastFmImage,
   LastFmRecentTrack,
@@ -9,12 +10,15 @@ import type {
   LastFmTrackInfoResponse,
   RankingMode,
   RecentTracksResult,
+  RecentTracksResumeState,
   TimeRange,
   TimeRangeValue,
 } from "../types";
 
 const LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/";
 const DURATION_CACHE_KEY = "lastfm-collage-duration-cache";
+const RECENT_TRACKS_CHECKPOINT_KEY = "lastfm-collage-recent-tracks-checkpoint";
+const LASTFM_MIN_REQUEST_INTERVAL_MS = 200;
 const DAYS_BY_RANGE: Record<Exclude<TimeRangeValue, "overall">, number> = {
   "7d": 7,
   "1m": 30,
@@ -24,6 +28,17 @@ const DAYS_BY_RANGE: Record<Exclude<TimeRangeValue, "overall">, number> = {
 };
 
 const durationCache = loadDurationCache();
+const lastFmRequestScheduler = createRequestScheduler(
+  import.meta.env.MODE === "test" ? 0 : LASTFM_MIN_REQUEST_INTERVAL_MS,
+);
+
+interface RecentTracksCheckpoint {
+  queryKey: string;
+  nextPage: number;
+  totalPages: number;
+  startedAt: number;
+  items: LastFmRecentTrack[];
+}
 
 export function buildTimeRange(value: TimeRangeValue): TimeRange {
   if (value === "overall") {
@@ -45,10 +60,27 @@ export async function fetchRecentTracks(
   timeRange: TimeRange,
   apiKey: string,
   onStatus?: (message: string) => void,
+  onProgress?: (progress: FetchProgressState) => void,
 ): Promise<RecentTracksResult> {
-  const allTracks: LastFmRecentTrack[] = [];
-  let page = 1;
-  let totalPages = 1;
+  const queryKey = buildRecentTracksQueryKey(username, timeRange);
+  const storedCheckpoint = loadRecentTracksCheckpoint(queryKey);
+  const checkpoint =
+    storedCheckpoint &&
+    storedCheckpoint.nextPage > 1 &&
+    storedCheckpoint.nextPage <= storedCheckpoint.totalPages
+      ? storedCheckpoint
+      : null;
+  const allTracks: LastFmRecentTrack[] = checkpoint ? [...checkpoint.items] : [];
+  let page = checkpoint?.nextPage ?? 1;
+  let totalPages = checkpoint?.totalPages ?? 1;
+  const startedAt = checkpoint?.startedAt ?? Date.now();
+
+  if (checkpoint) {
+    onStatus?.(
+      `Resuming listening history from Last.fm... page ${checkpoint.nextPage} of ${checkpoint.totalPages}`,
+    );
+    publishProgress(checkpoint.nextPage - 1, checkpoint.totalPages, startedAt, onProgress);
+  }
 
   do {
     onStatus?.(`Fetching listening history from Last.fm... page ${page}`);
@@ -74,12 +106,38 @@ export async function fetchRecentTracks(
     }
 
     totalPages = Number(recentTracks?.["@attr"]?.totalPages || page);
+    const completedPages = page;
+    persistRecentTracksCheckpoint({
+      queryKey,
+      nextPage: completedPages + 1,
+      totalPages,
+      startedAt,
+      items: allTracks,
+    });
+    publishProgress(completedPages, totalPages, startedAt, onProgress);
     page += 1;
   } while (page <= totalPages);
+
+  clearRecentTracksCheckpoint(queryKey);
 
   return {
     items: allTracks,
     pagesFetched: totalPages,
+  };
+}
+
+export function getRecentTracksResumeState(
+  username: string,
+  timeRange: TimeRange,
+): RecentTracksResumeState | null {
+  const checkpoint = loadRecentTracksCheckpoint(buildRecentTracksQueryKey(username, timeRange));
+  if (!checkpoint || checkpoint.nextPage <= 1 || checkpoint.nextPage > checkpoint.totalPages) {
+    return null;
+  }
+
+  return {
+    nextPage: checkpoint.nextPage,
+    totalPages: checkpoint.totalPages,
   };
 }
 
@@ -146,6 +204,7 @@ export async function hydrateApproximateListeningTimes(
   albums: AlbumEntry[],
   apiKey: string,
   onStatus?: (message: string) => void,
+  onProgress?: (progress: FetchProgressState) => void,
 ): Promise<number> {
   const uniqueTracks = new Map<string, AlbumTrack>();
 
@@ -162,6 +221,18 @@ export async function hydrateApproximateListeningTimes(
     ([trackKey]) => typeof durationCache[trackKey] !== "number",
   );
   let completedRequests = 0;
+  const startedAt = Date.now();
+
+  if (uncachedTracks.length > 0) {
+    onProgress?.({
+      completed: 0,
+      total: uncachedTracks.length,
+      estimatedRemainingMs: 0,
+      unitLabel: "Tracks",
+    });
+  } else {
+    onStatus?.("All required track durations were already cached.");
+  }
 
   await mapWithConcurrency(uncachedTracks, 5, async ([trackKey, track]) => {
     try {
@@ -185,6 +256,15 @@ export async function hydrateApproximateListeningTimes(
     } finally {
       completedRequests += 1;
       if (uncachedTracks.length > 0) {
+        const elapsedMs = Math.max(Date.now() - startedAt, 0);
+        const averageRequestMs = completedRequests > 0 ? elapsedMs / completedRequests : 0;
+        onProgress?.({
+          completed: completedRequests,
+          total: uncachedTracks.length,
+          estimatedRemainingMs:
+            Math.max(uncachedTracks.length - completedRequests, 0) * averageRequestMs,
+          unitLabel: "Tracks",
+        });
         onStatus?.(
           `Fetching track durations for approximate listening time... ${completedRequests}/${uncachedTracks.length}`,
         );
@@ -261,7 +341,7 @@ async function callLastFm<T extends object>(
     ...params,
   }).toString();
 
-  const response = await fetch(url.toString());
+  const response = await lastFmRequestScheduler.schedule(() => fetch(url.toString()));
   if (!response.ok) {
     throw new Error(`Last.fm request failed with HTTP ${response.status}.`);
   }
@@ -272,6 +352,44 @@ async function callLastFm<T extends object>(
   }
 
   return payload;
+}
+
+interface RequestScheduler {
+  schedule<T>(task: () => Promise<T>): Promise<T>;
+}
+
+export function createRequestScheduler(
+  minIntervalMs: number,
+  options?: {
+    now?: () => number;
+    sleep?: (milliseconds: number) => Promise<void>;
+  },
+): RequestScheduler {
+  const now = options?.now ?? (() => Date.now());
+  const sleep = options?.sleep ?? wait;
+  let nextStartAt = 0;
+  let queue = Promise.resolve();
+
+  return {
+    schedule<T>(task: () => Promise<T>): Promise<T> {
+      const runTask = async () => {
+        const waitMs = Math.max(nextStartAt - now(), 0);
+        if (waitMs > 0) {
+          await sleep(waitMs);
+        }
+
+        nextStartAt = now() + minIntervalMs;
+        return task();
+      };
+
+      const scheduled = queue.then(runTask, runTask);
+      queue = scheduled.then(
+        () => undefined,
+        () => undefined,
+      );
+      return scheduled;
+    },
+  };
 }
 
 function readText(value: LastFmTextField): string {
@@ -338,6 +456,10 @@ function normalizeForKey(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function buildRecentTracksQueryKey(username: string, timeRange: TimeRange): string {
+  return `${normalizeForKey(username)}::${timeRange.label}`;
+}
+
 function loadDurationCache(): Record<string, number> {
   try {
     const raw = window.localStorage.getItem(DURATION_CACHE_KEY);
@@ -355,6 +477,71 @@ function loadDurationCache(): Record<string, number> {
 
 function persistDurationCache(cache: Record<string, number>): void {
   window.localStorage.setItem(DURATION_CACHE_KEY, JSON.stringify(cache));
+}
+
+function loadRecentTracksCheckpoint(queryKey: string): RecentTracksCheckpoint | null {
+  try {
+    const raw = window.localStorage.getItem(RECENT_TRACKS_CHECKPOINT_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const checkpoint = parsed as Partial<RecentTracksCheckpoint>;
+    if (
+      checkpoint.queryKey !== queryKey ||
+      !Array.isArray(checkpoint.items) ||
+      typeof checkpoint.nextPage !== "number" ||
+      typeof checkpoint.totalPages !== "number" ||
+      typeof checkpoint.startedAt !== "number"
+    ) {
+      return null;
+    }
+
+    return {
+      queryKey: checkpoint.queryKey,
+      nextPage: checkpoint.nextPage,
+      totalPages: checkpoint.totalPages,
+      startedAt: checkpoint.startedAt,
+      items: checkpoint.items,
+    };
+  } catch (error) {
+    console.warn("Could not load recent tracks checkpoint", error);
+    return null;
+  }
+}
+
+function persistRecentTracksCheckpoint(checkpoint: RecentTracksCheckpoint): void {
+  window.localStorage.setItem(RECENT_TRACKS_CHECKPOINT_KEY, JSON.stringify(checkpoint));
+}
+
+function clearRecentTracksCheckpoint(queryKey: string): void {
+  const checkpoint = loadRecentTracksCheckpoint(queryKey);
+  if (!checkpoint) {
+    return;
+  }
+
+  window.localStorage.removeItem(RECENT_TRACKS_CHECKPOINT_KEY);
+}
+
+function publishProgress(
+  completedPages: number,
+  totalPages: number,
+  startedAt: number,
+  onProgress?: (progress: FetchProgressState) => void,
+): void {
+  const elapsedMs = Math.max(Date.now() - startedAt, 0);
+  const averagePageMs = completedPages > 0 ? elapsedMs / completedPages : 0;
+  onProgress?.({
+    completed: completedPages,
+    total: totalPages,
+    estimatedRemainingMs: Math.max(totalPages - completedPages, 0) * averagePageMs,
+    unitLabel: "Pages",
+  });
 }
 
 async function mapWithConcurrency<T>(
@@ -380,4 +567,10 @@ async function mapWithConcurrency<T>(
 
   await Promise.all(workers);
   return results.map(() => undefined);
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
 }

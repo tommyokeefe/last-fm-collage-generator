@@ -1,7 +1,10 @@
 import {
   aggregateAlbums,
   buildTimeRange,
+  createRequestScheduler,
+  fetchRecentTracks,
   formatMetric,
+  getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
   sortAlbums,
 } from "./lastfm";
@@ -119,6 +122,92 @@ describe("lastfm helpers", () => {
     warnSpy.mockRestore();
   });
 
+  it("resumes recent track fetching from the last successful page", async () => {
+    window.localStorage.clear();
+    const timeRange = buildTimeRange("1m");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [{ "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "123" },
+                },
+              ],
+              "@attr": { totalPages: "3" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockRejectedValueOnce(new Error("Network down"));
+
+    await expect(fetchRecentTracks("tommy", timeRange, "test-key")).rejects.toThrow("Network down");
+    expect(getRecentTracksResumeState("tommy", timeRange)).toEqual({
+      nextPage: 2,
+      totalPages: 3,
+    });
+
+    fetchSpy.mockReset();
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist Two" },
+                  album: { "#text": "Album B" },
+                  name: "Track 2",
+                  image: [{ "#text": "https://example.com/b.jpg" }],
+                  date: { uts: "456" },
+                },
+              ],
+              "@attr": { totalPages: "3" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist Three" },
+                  album: { "#text": "Album C" },
+                  name: "Track 3",
+                  image: [{ "#text": "https://example.com/c.jpg" }],
+                  date: { uts: "789" },
+                },
+              ],
+              "@attr": { totalPages: "3" },
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+
+    const resumed = await fetchRecentTracks("tommy", timeRange, "test-key");
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("page=2"),
+    );
+    expect(resumed.items).toHaveLength(3);
+    expect(getRecentTracksResumeState("tommy", timeRange)).toBeNull();
+
+    fetchSpy.mockRestore();
+  });
+
   it("sorts by approximate listening time when requested", () => {
     const albums: AlbumEntry[] = [
       {
@@ -158,5 +247,37 @@ describe("lastfm helpers", () => {
     };
 
     expect(formatMetric(album, "plays")).toBe("12 plays");
+  });
+
+  it("spaces scheduled Last.fm requests", async () => {
+    let currentTime = 0;
+    const startTimes: number[] = [];
+    const waits: number[] = [];
+    const scheduler = createRequestScheduler(200, {
+      now: () => currentTime,
+      sleep: (milliseconds) => {
+        waits.push(milliseconds);
+        currentTime += milliseconds;
+        return Promise.resolve();
+      },
+    });
+
+    await Promise.all([
+      scheduler.schedule(() => {
+        startTimes.push(currentTime);
+        return Promise.resolve();
+      }),
+      scheduler.schedule(() => {
+        startTimes.push(currentTime);
+        return Promise.resolve();
+      }),
+      scheduler.schedule(() => {
+        startTimes.push(currentTime);
+        return Promise.resolve();
+      }),
+    ]);
+
+    expect(startTimes).toEqual([0, 200, 400]);
+    expect(waits).toEqual([200, 200]);
   });
 });

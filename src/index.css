@@ -209,6 +209,43 @@ button:disabled {
   padding: 0.9rem 1rem;
 }
 
+.status-message {
+  line-height: 1.5;
+}
+
+.status-progress {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.status-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.status-progress progress {
+  width: 100%;
+  height: 0.8rem;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.status-progress progress::-webkit-progress-bar {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-progress progress::-webkit-progress-value {
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
+.status-progress progress::-moz-progress-bar {
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
 .status-banner.is-error {
   border-color: rgba(255, 122, 144, 0.45);
   color: #ffd1da;
