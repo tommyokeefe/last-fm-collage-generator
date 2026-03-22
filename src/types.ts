@@ -26,6 +26,7 @@ export interface SummaryState {
 
 export interface AlbumTrack {
   artist: string;
+  album: string;
   name: string;
   plays: number;
 }

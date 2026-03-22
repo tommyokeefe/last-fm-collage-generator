@@ -125,11 +125,12 @@ export function aggregateAlbums(scrobbles: LastFmRecentTrack[]): AlbumEntry[] {
     }
 
     if (!entry.tracks.has(trackKey)) {
-      entry.tracks.set(trackKey, {
-        artist,
-        name: trackName,
-        plays: 0,
-      });
+        entry.tracks.set(trackKey, {
+          artist,
+          album,
+          name: trackName,
+          plays: 0,
+        });
     }
 
     const albumTrack = entry.tracks.get(trackKey);
@@ -173,11 +174,13 @@ export async function hydrateApproximateListeningTimes(
       const duration = Number(payload.track?.duration || 0);
       durationCache[trackKey] = Number.isFinite(duration) ? duration : 0;
       if (!durationCache[trackKey]) {
+        warnMissingDuration(track);
         durationGaps += 1;
       }
     } catch (error) {
       console.warn("Duration lookup failed", track, error);
       durationCache[trackKey] = 0;
+      warnMissingDuration(track);
       durationGaps += 1;
     } finally {
       completedRequests += 1;
@@ -237,6 +240,12 @@ export function formatDuration(milliseconds: number): string {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return minutes === 0 ? `${hours} hr` : `${hours} hr ${minutes} min`;
+}
+
+function warnMissingDuration(track: AlbumTrack): void {
+  console.warn(
+    `[lastfm-duration-gap] Missing duration metadata for "${track.name}" on album "${track.album}" by ${track.artist}.`,
+  );
 }
 
 async function callLastFm<T extends object>(

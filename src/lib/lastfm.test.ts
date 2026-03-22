@@ -1,4 +1,10 @@
-import { aggregateAlbums, buildTimeRange, formatMetric, sortAlbums } from "./lastfm";
+import {
+  aggregateAlbums,
+  buildTimeRange,
+  formatMetric,
+  hydrateApproximateListeningTimes,
+  sortAlbums,
+} from "./lastfm";
 import type { AlbumEntry, LastFmRecentTrack } from "../types";
 
 describe("lastfm helpers", () => {
@@ -84,6 +90,33 @@ describe("lastfm helpers", () => {
     const albums = aggregateAlbums(tracks);
 
     expect(albums).toHaveLength(2);
+  });
+
+  it("warns when a track duration is missing", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
+    );
+
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track Missing Duration",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    const durationGaps = await hydrateApproximateListeningTimes(albums, "test-key");
+
+    expect(durationGaps).toBe(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[lastfm-duration-gap] Missing duration metadata for "Track Missing Duration" on album "Album A" by Artist One.',
+    );
+
+    fetchSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   it("sorts by approximate listening time when requested", () => {
