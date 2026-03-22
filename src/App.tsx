@@ -11,6 +11,7 @@ import {
 } from "./lib/lastfm";
 import type {
   AlbumEntry,
+  ExportRenderOptions,
   GridSize,
   PreviewGridStyle,
   RankingMode,
@@ -21,6 +22,7 @@ import type {
 } from "./types";
 
 const SETTINGS_KEY = "lastfm-collage-settings";
+type PreviewMode = "config" | "export";
 const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "7d", label: "Last 7 days" },
   { value: "1m", label: "Last 30 days" },
@@ -35,6 +37,8 @@ const DEFAULT_SETTINGS: Settings = {
   timeRange: "1m",
   gridSize: "4x4",
   rankingMode: "plays",
+  showAlbumInfo: true,
+  showMetric: true,
 };
 
 function App() {
@@ -48,6 +52,9 @@ function App() {
   const [isBusy, setIsBusy] = useState(false);
   const [summary, setSummary] = useState<SummaryState | null>(null);
   const [renderedAlbums, setRenderedAlbums] = useState<AlbumEntry[]>([]);
+  const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
+  const [exportPreviewUrl, setExportPreviewUrl] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("config");
   const [resultsCopy, setResultsCopy] = useState(
     "Your collage will appear here after generation.",
   );
@@ -60,6 +67,56 @@ function App() {
     () => parseGridSize(settings.gridSize),
     [settings.gridSize],
   );
+  const exportRenderOptions = useMemo(
+    () => ({
+      showAlbumInfo: settings.showAlbumInfo,
+      showMetric: settings.showMetric,
+    }),
+    [settings.showAlbumInfo, settings.showMetric],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function syncExactPreview() {
+      if (renderedAlbums.length === 0) {
+        setNextExportPreview(null);
+        return;
+      }
+
+      const previewBlob = await tryRenderExportPreview(
+        renderedAlbums,
+        rows,
+        columns,
+        settings.rankingMode,
+        exportRenderOptions,
+      );
+
+      if (!cancelled) {
+        setNextExportPreview(previewBlob);
+      }
+    }
+
+    void syncExactPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    columns,
+    exportRenderOptions,
+    renderedAlbums,
+    rows,
+    settings.rankingMode,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (exportPreviewUrl) {
+        window.URL.revokeObjectURL(exportPreviewUrl);
+      }
+    };
+  }, [exportPreviewUrl]);
 
   const canExport = !isBusy && renderedAlbums.length > 0;
 
@@ -102,6 +159,7 @@ function App() {
 
       if (aggregated.length === 0) {
         setRenderedAlbums([]);
+        setNextExportPreview(null);
         setSummary(null);
         setResultsCopy("No collage generated yet.");
         setStatus({
@@ -144,6 +202,7 @@ function App() {
     } catch (error) {
       console.error(error);
       setRenderedAlbums([]);
+      setNextExportPreview(null);
       setSummary(null);
       setResultsCopy("Your collage will appear here after generation.");
       setStatus({
@@ -164,12 +223,15 @@ function App() {
     setStatus({ tone: "info", message: "Rendering PNG export..." });
 
     try {
-      const blob = await renderExportBlob(
-        renderedAlbums,
-        rows,
-        columns,
-        settings.rankingMode,
-      );
+      const blob =
+        exportPreviewBlob ??
+        (await renderExportBlob(
+          renderedAlbums,
+          rows,
+          columns,
+          settings.rankingMode,
+          exportRenderOptions,
+        ));
       const objectUrl = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
@@ -186,6 +248,17 @@ function App() {
     } finally {
       setIsBusy(false);
     }
+  }
+
+  function setNextExportPreview(nextBlob: Blob | null) {
+    setExportPreviewBlob(nextBlob);
+    setExportPreviewUrl((currentUrl) => {
+      if (currentUrl) {
+        window.URL.revokeObjectURL(currentUrl);
+      }
+
+      return nextBlob ? window.URL.createObjectURL(nextBlob) : null;
+    });
   }
 
   return (
@@ -303,6 +376,38 @@ function App() {
               </label>
             </fieldset>
 
+            <fieldset className="mode-fieldset">
+              <legend>True PNG preview and export</legend>
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={settings.showAlbumInfo}
+                  onChange={(event) =>
+                    setSettings((current) => ({
+                      ...current,
+                      showAlbumInfo: event.target.checked,
+                    }))
+                  }
+                  disabled={isBusy}
+                />
+                <span>Show album and artist text</span>
+              </label>
+              <label className="checkbox-option">
+                <input
+                  type="checkbox"
+                  checked={settings.showMetric}
+                  onChange={(event) =>
+                    setSettings((current) => ({
+                      ...current,
+                      showMetric: event.target.checked,
+                    }))
+                  }
+                  disabled={isBusy}
+                />
+                <span>Show play count or listening time</span>
+              </label>
+            </fieldset>
+
             <div className="button-row">
               <button type="submit" disabled={isBusy}>
                 {isBusy ? "Generating..." : "Generate collage"}
@@ -323,13 +428,39 @@ function App() {
               <h2>Preview</h2>
               <p className="results-copy">{resultsCopy}</p>
             </div>
+            <div className="preview-mode-toggle" role="tablist" aria-label="Preview modes">
+              <button
+                type="button"
+                className={previewMode === "config" ? "is-active" : ""}
+                onClick={() => setPreviewMode("config")}
+                aria-pressed={previewMode === "config"}
+              >
+                Configuration view
+              </button>
+              <button
+                type="button"
+                className={previewMode === "export" ? "is-active" : ""}
+                onClick={() => setPreviewMode("export")}
+                aria-pressed={previewMode === "export"}
+              >
+                True PNG preview
+              </button>
+            </div>
           </div>
 
-          <PreviewGrid
-            albums={renderedAlbums}
-            columns={columns}
-            rankingMode={settings.rankingMode}
-          />
+          {previewMode === "config" ? (
+            <PreviewGrid
+              albums={renderedAlbums}
+              columns={columns}
+              rankingMode={settings.rankingMode}
+            />
+          ) : (
+            <ExportPreview
+              exportPreviewUrl={exportPreviewUrl}
+              hasAlbums={renderedAlbums.length > 0}
+              username={settings.username.trim()}
+            />
+          )}
         </section>
       </main>
     </div>
@@ -416,7 +547,6 @@ function PreviewGrid({ albums, columns, rankingMode }: PreviewGridProps) {
           key={`${album.artist}-${album.album}-${index}`}
           className={`album-tile ${album.imageUrl ? "" : "is-placeholder"}`}
         >
-          <div className="tile-rank">#{index + 1}</div>
           {album.imageUrl ? (
             <img src={album.imageUrl} alt={`${album.album} by ${album.artist}`} />
           ) : (
@@ -432,6 +562,44 @@ function PreviewGrid({ albums, columns, rankingMode }: PreviewGridProps) {
           </div>
         </article>
       ))}
+    </div>
+  );
+}
+
+interface ExportPreviewProps {
+  exportPreviewUrl: string | null;
+  hasAlbums: boolean;
+  username: string;
+}
+
+function ExportPreview({ exportPreviewUrl, hasAlbums, username }: ExportPreviewProps) {
+  if (!hasAlbums) {
+    return (
+      <div className="empty-state export-preview-empty">
+        <p>No collage generated yet.</p>
+      </div>
+    );
+  }
+
+  if (!exportPreviewUrl) {
+    return (
+      <div className="empty-state export-preview-empty">
+        <p>The exact PNG preview is not available yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="export-preview-shell">
+      <img
+        className="export-preview-image"
+        src={exportPreviewUrl}
+        alt={
+          username
+            ? `Exact PNG preview for ${username}`
+            : "Exact PNG preview"
+        }
+      />
     </div>
   );
 }
@@ -467,6 +635,14 @@ function loadSettings(): Settings {
         ? (parsed.gridSize as GridSize)
         : DEFAULT_SETTINGS.gridSize,
       rankingMode: parsed.rankingMode === "listening-time" ? "listening-time" : "plays",
+      showAlbumInfo:
+        typeof parsed.showAlbumInfo === "boolean"
+          ? parsed.showAlbumInfo
+          : DEFAULT_SETTINGS.showAlbumInfo,
+      showMetric:
+        typeof parsed.showMetric === "boolean"
+          ? parsed.showMetric
+          : DEFAULT_SETTINGS.showMetric,
     };
   } catch (error) {
     console.warn("Could not restore saved settings", error);
@@ -477,6 +653,25 @@ function loadSettings(): Settings {
 function getApiKey(): string {
   const value: unknown = import.meta.env.VITE_LASTFM_API_KEY;
   return typeof value === "string" ? value.trim() : "";
+}
+
+async function tryRenderExportPreview(
+  albums: AlbumEntry[],
+  rows: number,
+  columns: number,
+  rankingMode: RankingMode,
+  options: ExportRenderOptions,
+): Promise<Blob | null> {
+  if (albums.length === 0) {
+    return null;
+  }
+
+  try {
+    return await renderExportBlob(albums, rows, columns, rankingMode, options);
+  } catch (error) {
+    console.error("Could not render exact PNG preview", error);
+    return null;
+  }
 }
 
 export default App;

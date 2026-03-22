@@ -10,6 +10,8 @@ export interface Settings {
   timeRange: TimeRangeValue;
   gridSize: GridSize;
   rankingMode: RankingMode;
+  showAlbumInfo: boolean;
+  showMetric: boolean;
 }
 
 export interface StatusState {
@@ -100,3 +102,8 @@ export interface RecentTracksResult {
 export type PreviewGridStyle = CSSProperties & {
   "--columns": number;
 };
+
+export interface ExportRenderOptions {
+  showAlbumInfo: boolean;
+  showMetric: boolean;
+}

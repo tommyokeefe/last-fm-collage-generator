@@ -1,11 +1,12 @@
 import { formatMetric } from "./lastfm";
-import type { AlbumEntry, RankingMode } from "../types";
+import type { AlbumEntry, ExportRenderOptions, RankingMode } from "../types";
 
 export async function renderExportBlob(
   albums: AlbumEntry[],
   rows: number,
   columns: number,
   rankingMode: RankingMode,
+  options: ExportRenderOptions,
 ): Promise<Blob> {
   const tileSize = 500;
   const canvas = document.createElement("canvas");
@@ -25,7 +26,15 @@ export async function renderExportBlob(
     const column = index % columns;
     const x = column * tileSize;
     const y = row * tileSize;
-    await drawAlbumTile(context, albums[index] as AlbumEntry, x, y, tileSize, index + 1, rankingMode);
+    await drawAlbumTile(
+      context,
+      albums[index] as AlbumEntry,
+      x,
+      y,
+      tileSize,
+      rankingMode,
+      options,
+    );
   }
 
   const blob = await new Promise<Blob | null>((resolve) => {
@@ -45,8 +54,8 @@ async function drawAlbumTile(
   x: number,
   y: number,
   tileSize: number,
-  rank: number,
   rankingMode: RankingMode,
+  options: ExportRenderOptions,
 ): Promise<void> {
   context.save();
   context.strokeStyle = "rgba(255, 255, 255, 0.08)";
@@ -58,35 +67,43 @@ async function drawAlbumTile(
       context.drawImage(image, x, y, tileSize, tileSize);
     } catch (error) {
       console.warn("Could not load album art for export", album, error);
-      drawPlaceholderTile(context, album, x, y, tileSize);
+      drawPlaceholderTile(context, album, x, y, tileSize, options);
     }
   } else {
-    drawPlaceholderTile(context, album, x, y, tileSize);
+    drawPlaceholderTile(context, album, x, y, tileSize, options);
   }
 
-  context.fillStyle = "rgba(7, 17, 31, 0.84)";
-  roundRect(context, x + 16, y + 16, 68, 40, 20);
-  context.fill();
-  context.fillStyle = "#eef2ff";
-  context.font = "700 20px Inter, sans-serif";
-  context.fillText(`#${rank}`, x + 29, y + 41);
+  if (!options.showAlbumInfo && !options.showMetric) {
+    context.restore();
+    return;
+  }
 
-  const gradient = context.createLinearGradient(0, y + tileSize - 160, 0, y + tileSize);
+  const overlayHeight = options.showAlbumInfo ? 160 : 84;
+  const gradient = context.createLinearGradient(0, y + tileSize - overlayHeight, 0, y + tileSize);
   gradient.addColorStop(0, "rgba(0, 0, 0, 0)");
   gradient.addColorStop(1, "rgba(0, 0, 0, 0.88)");
   context.fillStyle = gradient;
-  context.fillRect(x, y + tileSize - 160, tileSize, 160);
+  context.fillRect(x, y + tileSize - overlayHeight, tileSize, overlayHeight);
 
-  context.fillStyle = "#eef2ff";
-  context.font = "700 28px Inter, sans-serif";
-  drawWrappedText(context, album.album, x + 24, y + tileSize - 88, tileSize - 48, 34, 2);
-  context.font = "500 22px Inter, sans-serif";
-  context.fillStyle = "#d6e0ff";
-  drawWrappedText(context, album.artist, x + 24, y + tileSize - 28, tileSize - 48, 28, 1);
+  if (options.showMetric) {
+    context.font = "500 18px Inter, sans-serif";
+    context.fillStyle = "#d6e0ff";
+    context.fillText(
+      formatMetric(album, rankingMode),
+      x + 24,
+      options.showAlbumInfo ? y + tileSize - 128 : y + tileSize - 32,
+    );
+  }
 
-  context.font = "500 18px Inter, sans-serif";
-  context.fillStyle = "#d6e0ff";
-  context.fillText(formatMetric(album, rankingMode), x + 24, y + tileSize - 128);
+  if (options.showAlbumInfo) {
+    context.fillStyle = "#eef2ff";
+    context.font = "700 28px Inter, sans-serif";
+    drawWrappedText(context, album.album, x + 24, y + tileSize - 88, tileSize - 48, 34, 2);
+    context.font = "500 22px Inter, sans-serif";
+    context.fillStyle = "#d6e0ff";
+    drawWrappedText(context, album.artist, x + 24, y + tileSize - 28, tileSize - 48, 28, 1);
+  }
+
   context.restore();
 }
 
@@ -96,6 +113,7 @@ function drawPlaceholderTile(
   x: number,
   y: number,
   tileSize: number,
+  options: ExportRenderOptions,
 ): void {
   const gradient = context.createLinearGradient(x, y, x + tileSize, y + tileSize);
   gradient.addColorStop(0, "rgba(124, 156, 255, 0.45)");
@@ -108,12 +126,14 @@ function drawPlaceholderTile(
   context.arc(x + tileSize * 0.74, y + tileSize * 0.3, tileSize * 0.18, 0, Math.PI * 2);
   context.fill();
 
-  context.fillStyle = "#eef2ff";
-  context.font = "700 36px Inter, sans-serif";
-  drawWrappedText(context, album.album, x + 28, y + tileSize * 0.48, tileSize - 56, 42, 3);
-  context.font = "500 26px Inter, sans-serif";
-  context.fillStyle = "#d6e0ff";
-  drawWrappedText(context, album.artist, x + 28, y + tileSize * 0.72, tileSize - 56, 30, 2);
+  if (options.showAlbumInfo) {
+    context.fillStyle = "#eef2ff";
+    context.font = "700 36px Inter, sans-serif";
+    drawWrappedText(context, album.album, x + 28, y + tileSize * 0.48, tileSize - 56, 42, 3);
+    context.font = "500 26px Inter, sans-serif";
+    context.fillStyle = "#d6e0ff";
+    drawWrappedText(context, album.artist, x + 28, y + tileSize * 0.72, tileSize - 56, 30, 2);
+  }
 }
 
 function drawWrappedText(
@@ -157,23 +177,6 @@ function drawWrappedText(
   visibleLines.forEach((line, index) => {
     context.fillText(line, x, y + index * lineHeight);
   });
-}
-
-function roundRect(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-): void {
-  context.beginPath();
-  context.moveTo(x + radius, y);
-  context.arcTo(x + width, y, x + width, y + height, radius);
-  context.arcTo(x + width, y + height, x, y + height, radius);
-  context.arcTo(x, y + height, x, y, radius);
-  context.arcTo(x, y, x + width, y, radius);
-  context.closePath();
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {

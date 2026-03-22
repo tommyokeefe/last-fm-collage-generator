@@ -157,9 +157,17 @@ button:focus-visible {
   align-items: center;
 }
 
-.radio-option input {
+.radio-option input,
+.checkbox-option input {
   width: auto;
   margin: 0;
+}
+
+.checkbox-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  align-items: center;
 }
 
 .button-row {
@@ -243,6 +251,30 @@ button:disabled {
   align-items: flex-start;
 }
 
+.preview-mode-toggle {
+  display: inline-flex;
+  gap: 0.5rem;
+  padding: 0.35rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.preview-mode-toggle button {
+  width: auto;
+  min-width: 0;
+  padding: 0.6rem 0.9rem;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.preview-mode-toggle button.is-active {
+  background: var(--panel-muted);
+  border-color: var(--panel-border);
+  color: var(--text);
+}
+
 .preview-grid {
   --columns: 4;
   display: grid;
@@ -309,24 +341,32 @@ button:disabled {
   background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.88));
 }
 
-.tile-rank {
-  position: absolute;
-  top: 0.55rem;
-  left: 0.55rem;
-  min-width: 2rem;
-  padding: 0.35rem 0.5rem;
-  border-radius: 999px;
-  background: rgba(7, 17, 31, 0.84);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  font-size: 0.82rem;
-  font-weight: 700;
-  text-align: center;
-}
-
 .tile-metric {
   margin-top: 0.35rem;
   color: #d7e0ff;
   font-size: 0.78rem;
+}
+
+.export-preview-shell {
+  display: grid;
+  place-items: center;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.export-preview-image {
+  display: block;
+  width: min(100%, 880px);
+  height: auto;
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.export-preview-empty {
+  margin-top: 1.25rem;
 }
 
 @media (max-width: 900px) {
@@ -337,6 +377,10 @@ button:disabled {
 
   .hero {
     align-items: stretch;
+  }
+
+  .results-header {
+    flex-direction: column;
   }
 }
 
