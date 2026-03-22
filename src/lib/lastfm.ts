@@ -19,6 +19,7 @@ const LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/";
 const DURATION_CACHE_KEY = "lastfm-collage-duration-cache";
 const RECENT_TRACKS_CHECKPOINT_KEY = "lastfm-collage-recent-tracks-checkpoint";
 const LASTFM_MIN_REQUEST_INTERVAL_MS = 200;
+const MISSING_DURATION_RETRY_AFTER_MS = 60 * 60 * 1000;
 const DAYS_BY_RANGE: Record<Exclude<TimeRangeValue, "overall">, number> = {
   "7d": 7,
   "1m": 30,
@@ -31,6 +32,11 @@ const durationCache = loadDurationCache();
 const lastFmRequestScheduler = createRequestScheduler(
   import.meta.env.MODE === "test" ? 0 : LASTFM_MIN_REQUEST_INTERVAL_MS,
 );
+
+interface DurationCacheEntry {
+  duration: number;
+  checkedAt: number;
+}
 
 interface RecentTracksCheckpoint {
   queryKey: string;
@@ -206,6 +212,7 @@ export async function hydrateApproximateListeningTimes(
   onStatus?: (message: string) => void,
   onProgress?: (progress: FetchProgressState) => void,
 ): Promise<number> {
+  syncDurationCacheFromStorage();
   const uniqueTracks = new Map<string, AlbumTrack>();
 
   for (const album of albums) {
@@ -218,7 +225,7 @@ export async function hydrateApproximateListeningTimes(
 
   let durationGaps = 0;
   const uncachedTracks = [...uniqueTracks.entries()].filter(
-    ([trackKey]) => typeof durationCache[trackKey] !== "number",
+    ([trackKey]) => shouldFetchDuration(durationCache[trackKey]),
   );
   let completedRequests = 0;
   const startedAt = Date.now();
@@ -243,14 +250,21 @@ export async function hydrateApproximateListeningTimes(
       }, apiKey);
 
       const duration = Number(payload.track?.duration || 0);
-      durationCache[trackKey] = Number.isFinite(duration) ? duration : 0;
-      if (!durationCache[trackKey]) {
+      const normalizedDuration = Number.isFinite(duration) ? duration : 0;
+      durationCache[trackKey] = {
+        duration: normalizedDuration,
+        checkedAt: Date.now(),
+      };
+      if (!normalizedDuration) {
         warnMissingDuration(track);
         durationGaps += 1;
       }
     } catch (error) {
       console.warn("Duration lookup failed", track, error);
-      durationCache[trackKey] = 0;
+      durationCache[trackKey] = {
+        duration: 0,
+        checkedAt: Date.now(),
+      };
       warnMissingDuration(track);
       durationGaps += 1;
     } finally {
@@ -278,7 +292,7 @@ export async function hydrateApproximateListeningTimes(
     let total = 0;
 
     for (const [trackKey, track] of album.tracks.entries()) {
-      total += (durationCache[trackKey] || 0) * track.plays;
+      total += readCachedDuration(durationCache[trackKey]) * track.plays;
     }
 
     album.approximateListeningMs = total;
@@ -459,7 +473,7 @@ function buildRecentTracksQueryKey(username: string, timeRange: TimeRange): stri
   return `${normalizeForKey(username)}::${timeRange.label}`;
 }
 
-function loadDurationCache(): Record<string, number> {
+function loadDurationCache(): Record<string, DurationCacheEntry> {
   try {
     const raw = window.localStorage.getItem(DURATION_CACHE_KEY);
     if (!raw) {
@@ -467,15 +481,36 @@ function loadDurationCache(): Record<string, number> {
     }
 
     const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([trackKey, value]) => {
+        const entry = normalizeDurationCacheEntry(value);
+        return entry ? [[trackKey, entry]] : [];
+      }),
+    );
   } catch (error) {
     console.warn("Could not load duration cache", error);
     return {};
   }
 }
 
-function persistDurationCache(cache: Record<string, number>): void {
+function persistDurationCache(cache: Record<string, DurationCacheEntry>): void {
   window.localStorage.setItem(DURATION_CACHE_KEY, JSON.stringify(cache));
+}
+
+function syncDurationCacheFromStorage(): void {
+  const latestCache = loadDurationCache();
+
+  for (const key of Object.keys(durationCache)) {
+    if (!(key in latestCache)) {
+      delete durationCache[key];
+    }
+  }
+
+  Object.assign(durationCache, latestCache);
 }
 
 function loadRecentTracksCheckpoint(queryKey: string): RecentTracksCheckpoint | null {
@@ -541,6 +576,45 @@ function publishProgress(
     estimatedRemainingMs: Math.max(totalPages - completedPages, 0) * averagePageMs,
     unitLabel: "Pages",
   });
+}
+
+function shouldFetchDuration(entry?: DurationCacheEntry): boolean {
+  if (!entry) {
+    return true;
+  }
+
+  if (entry.duration > 0) {
+    return false;
+  }
+
+  return Date.now() - entry.checkedAt > MISSING_DURATION_RETRY_AFTER_MS;
+}
+
+function readCachedDuration(entry?: DurationCacheEntry): number {
+  return entry?.duration ?? 0;
+}
+
+function normalizeDurationCacheEntry(value: unknown): DurationCacheEntry | null {
+  if (typeof value === "number") {
+    return {
+      duration: Number.isFinite(value) ? value : 0,
+      checkedAt: value > 0 ? Date.now() : 0,
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entry = value as Partial<DurationCacheEntry>;
+  if (typeof entry.duration !== "number" || typeof entry.checkedAt !== "number") {
+    return null;
+  }
+
+  return {
+    duration: Number.isFinite(entry.duration) ? entry.duration : 0,
+    checkedAt: Number.isFinite(entry.checkedAt) ? entry.checkedAt : 0,
+  };
 }
 
 async function mapWithConcurrency<T>(

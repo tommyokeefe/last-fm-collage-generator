@@ -11,6 +11,11 @@ import {
 import type { AlbumEntry, LastFmRecentTrack } from "../types";
 
 describe("lastfm helpers", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
   it("returns overall range without timestamps", () => {
     expect(buildTimeRange("overall")).toEqual({ label: "overall" });
   });
@@ -120,6 +125,97 @@ describe("lastfm helpers", () => {
 
     fetchSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+
+  it("reuses successful cached durations without refetching", async () => {
+    window.localStorage.setItem(
+      "lastfm-collage-duration-cache",
+      JSON.stringify({
+        "artist one::track 1": {
+          duration: 180000,
+          checkedAt: 1000,
+        },
+      }),
+    );
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    await hydrateApproximateListeningTimes(albums, "test-key");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(albums[0]?.approximateListeningMs).toBe(180000);
+    fetchSpy.mockRestore();
+  });
+
+  it("retries missing durations after one hour", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(4_000_000);
+    window.localStorage.setItem(
+      "lastfm-collage-duration-cache",
+      JSON.stringify({
+        "artist one::track 1": {
+          duration: 0,
+          checkedAt: 1000,
+        },
+      }),
+    );
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ track: { duration: "240000" } }), { status: 200 }),
+    );
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    await hydrateApproximateListeningTimes(albums, "test-key");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(albums[0]?.approximateListeningMs).toBe(240000);
+    fetchSpy.mockRestore();
+  });
+
+  it("does not retry missing durations before one hour", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(3_500_000);
+    window.localStorage.setItem(
+      "lastfm-collage-duration-cache",
+      JSON.stringify({
+        "artist one::track 1": {
+          duration: 0,
+          checkedAt: 1000,
+        },
+      }),
+    );
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    await hydrateApproximateListeningTimes(albums, "test-key");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(albums[0]?.approximateListeningMs).toBe(0);
+    fetchSpy.mockRestore();
   });
 
   it("resumes recent track fetching from the last successful page", async () => {
