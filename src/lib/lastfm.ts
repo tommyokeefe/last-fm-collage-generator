@@ -95,13 +95,14 @@ export function aggregateAlbums(scrobbles: LastFmRecentTrack[]): AlbumEntry[] {
       continue;
     }
 
-    const albumKey = buildKey(artist, album);
     const imageUrl = readBestImage(track.image);
+    const albumKey = resolveAlbumKey(albums, album, imageUrl);
     const trackKey = buildKey(artist, trackName);
 
     if (!albums.has(albumKey)) {
       albums.set(albumKey, {
         artist,
+        artistNames: new Set([artist]),
         album,
         imageUrl,
         playCount: 0,
@@ -115,6 +116,8 @@ export function aggregateAlbums(scrobbles: LastFmRecentTrack[]): AlbumEntry[] {
       continue;
     }
 
+    entry.artistNames.add(artist);
+    entry.artist = formatArtistNames(entry.artistNames);
     entry.playCount += 1;
 
     if (!entry.imageUrl && imageUrl) {
@@ -294,6 +297,32 @@ function readBestImage(images?: LastFmImage[]): string {
 
 function buildKey(left: string, right: string): string {
   return `${normalizeForKey(left)}::${normalizeForKey(right)}`;
+}
+
+function resolveAlbumKey(
+  albums: Map<string, AlbumEntry>,
+  album: string,
+  imageUrl: string,
+): string {
+  const normalizedAlbum = normalizeForKey(album);
+
+  for (const [key, entry] of albums.entries()) {
+    if (normalizeForKey(entry.album) !== normalizedAlbum) {
+      continue;
+    }
+
+    if (imageUrl && entry.imageUrl && entry.imageUrl !== imageUrl) {
+      continue;
+    }
+
+    return key;
+  }
+
+  return imageUrl ? `${normalizedAlbum}::${imageUrl}` : normalizedAlbum;
+}
+
+function formatArtistNames(artistNames: Set<string>): string {
+  return [...artistNames].sort((left, right) => left.localeCompare(right)).join(", ");
 }
 
 function normalizeForKey(value: string): string {

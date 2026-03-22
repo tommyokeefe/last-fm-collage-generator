@@ -35,10 +35,62 @@ describe("lastfm helpers", () => {
     });
   });
 
+  it("combines the same album across multiple artists", () => {
+    const tracks: LastFmRecentTrack[] = [
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Collab Album" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/collab.jpg" }],
+        date: { uts: "123" },
+      },
+      {
+        artist: { name: "Artist Two" },
+        album: { "#text": "Collab Album" },
+        name: "Track 2",
+        image: [{ "#text": "https://example.com/collab.jpg" }],
+        date: { uts: "456" },
+      },
+    ];
+
+    const albums = aggregateAlbums(tracks);
+
+    expect(albums).toHaveLength(1);
+    expect(albums[0]).toMatchObject({
+      artist: "Artist One, Artist Two",
+      album: "Collab Album",
+      playCount: 2,
+    });
+  });
+
+  it("keeps same-title albums separate when their cover art differs", () => {
+    const tracks: LastFmRecentTrack[] = [
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Shared Title" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/one.jpg" }],
+        date: { uts: "123" },
+      },
+      {
+        artist: { name: "Artist Two" },
+        album: { "#text": "Shared Title" },
+        name: "Track 2",
+        image: [{ "#text": "https://example.com/two.jpg" }],
+        date: { uts: "456" },
+      },
+    ];
+
+    const albums = aggregateAlbums(tracks);
+
+    expect(albums).toHaveLength(2);
+  });
+
   it("sorts by approximate listening time when requested", () => {
     const albums: AlbumEntry[] = [
       {
         artist: "Artist One",
+        artistNames: new Set(["Artist One"]),
         album: "Album A",
         imageUrl: "",
         playCount: 4,
@@ -47,6 +99,7 @@ describe("lastfm helpers", () => {
       },
       {
         artist: "Artist Two",
+        artistNames: new Set(["Artist Two"]),
         album: "Album B",
         imageUrl: "",
         playCount: 2,
@@ -63,6 +116,7 @@ describe("lastfm helpers", () => {
   it("formats play metrics", () => {
     const album: AlbumEntry = {
       artist: "Artist",
+      artistNames: new Set(["Artist"]),
       album: "Album",
       imageUrl: "",
       playCount: 12,

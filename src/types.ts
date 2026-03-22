@@ -32,6 +32,7 @@ export interface AlbumTrack {
 
 export interface AlbumEntry {
   artist: string;
+  artistNames: Set<string>;
   album: string;
   imageUrl: string;
   playCount: number;
