@@ -368,26 +368,25 @@ export function createRequestScheduler(
   const now = options?.now ?? (() => Date.now());
   const sleep = options?.sleep ?? wait;
   let nextStartAt = 0;
-  let queue = Promise.resolve();
+  let startGate = Promise.resolve();
 
   return {
     schedule<T>(task: () => Promise<T>): Promise<T> {
-      const runTask = async () => {
+      const reserveStartSlot = async () => {
         const waitMs = Math.max(nextStartAt - now(), 0);
         if (waitMs > 0) {
           await sleep(waitMs);
         }
 
         nextStartAt = now() + minIntervalMs;
-        return task();
       };
 
-      const scheduled = queue.then(runTask, runTask);
-      queue = scheduled.then(
+      const scheduledStart = startGate.then(reserveStartSlot, reserveStartSlot);
+      startGate = scheduledStart.then(
         () => undefined,
         () => undefined,
       );
-      return scheduled;
+      return scheduledStart.then(() => task());
     },
   };
 }

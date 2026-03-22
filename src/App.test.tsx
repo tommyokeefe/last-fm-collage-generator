@@ -466,4 +466,60 @@ describe("App", () => {
       expect.stringContaining("page=2"),
     );
   });
+
+  it("reuses cached generated results when only the grid size changes", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                date: { uts: "123" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText("Grid size"), {
+      target: { value: "6x6" },
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(renderExportBlob)).toHaveBeenLastCalledWith(
+        expect.any(Array),
+        6,
+        6,
+        "plays",
+        {
+          showAlbumInfo: true,
+          showMetric: true,
+        },
+      );
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Showing the top 1 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+  });
 });

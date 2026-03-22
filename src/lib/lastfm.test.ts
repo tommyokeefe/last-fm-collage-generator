@@ -280,4 +280,44 @@ describe("lastfm helpers", () => {
     expect(startTimes).toEqual([0, 200, 400]);
     expect(waits).toEqual([200, 200]);
   });
+
+  it("allows scheduled requests to overlap in flight", async () => {
+    let currentTime = 0;
+    const startTimes: number[] = [];
+    const completions: string[] = [];
+    const scheduler = createRequestScheduler(200, {
+      now: () => currentTime,
+      sleep: (milliseconds) => {
+        currentTime += milliseconds;
+        return Promise.resolve();
+      },
+    });
+
+    let resolveFirst: (() => void) | undefined;
+    const first = scheduler.schedule(
+      () =>
+        new Promise<void>((resolve) => {
+          startTimes.push(currentTime);
+          resolveFirst = () => {
+            completions.push("first");
+            resolve();
+          };
+        }),
+    );
+    const second = scheduler.schedule(() => {
+      startTimes.push(currentTime);
+      completions.push("second");
+      return Promise.resolve();
+    });
+
+    await second;
+
+    expect(startTimes).toEqual([0, 200]);
+    expect(completions).toEqual(["second"]);
+
+    resolveFirst?.();
+    await Promise.all([first, second]);
+
+    expect(completions).toEqual(["second", "first"]);
+  });
 });

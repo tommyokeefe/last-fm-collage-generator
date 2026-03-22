@@ -52,6 +52,15 @@ const DEFAULT_SETTINGS: Settings = {
   showMetric: true,
 };
 
+interface GeneratedResultState {
+  query: {
+    username: string;
+    timeRange: TimeRangeValue;
+    rankingMode: RankingMode;
+  };
+  albums: AlbumEntry[];
+}
+
 function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [status, setStatus] = useState<StatusState>({
@@ -63,6 +72,7 @@ function App() {
   const [isBusy, setIsBusy] = useState(false);
   const [summary, setSummary] = useState<SummaryState | null>(null);
   const [renderedAlbums, setRenderedAlbums] = useState<AlbumEntry[]>([]);
+  const [generatedResult, setGeneratedResult] = useState<GeneratedResultState | null>(null);
   const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
   const [exportPreviewUrl, setExportPreviewUrl] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("config");
@@ -78,6 +88,7 @@ function App() {
     () => parseGridSize(settings.gridSize),
     [settings.gridSize],
   );
+  const trimmedUsername = settings.username.trim();
   const exportRenderOptions = useMemo(
     () => ({
       showAlbumInfo: settings.showAlbumInfo,
@@ -85,6 +96,26 @@ function App() {
     }),
     [settings.showAlbumInfo, settings.showMetric],
   );
+  const generatedQuery = useMemo(
+    () => ({
+      username: trimmedUsername,
+      timeRange: settings.timeRange,
+      rankingMode: settings.rankingMode,
+    }),
+    [settings.rankingMode, settings.timeRange, trimmedUsername],
+  );
+
+  useEffect(() => {
+    if (!generatedResult || !matchesGeneratedQuery(generatedResult, generatedQuery)) {
+      return;
+    }
+
+    const nextRenderedAlbums = generatedResult.albums.slice(0, rows * columns);
+    setRenderedAlbums(nextRenderedAlbums);
+    setResultsCopy(
+      buildResultsCopy(generatedQuery.username, generatedQuery.rankingMode, nextRenderedAlbums.length),
+    );
+  }, [columns, generatedQuery, generatedResult, rows]);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +167,7 @@ function App() {
 
     const apiKey = getApiKey();
     if (!apiKey) {
+      setGeneratedResult(null);
       setStatus({
         tone: "error",
         message:
@@ -144,7 +176,8 @@ function App() {
       return;
     }
 
-    if (!settings.username.trim()) {
+    if (!trimmedUsername) {
+      setGeneratedResult(null);
       setStatus({
         tone: "error",
         message: "Enter a Last.fm username to continue.",
@@ -165,7 +198,7 @@ function App() {
 
     try {
       const recentTracks = await fetchRecentTracks(
-        settings.username.trim(),
+        trimmedUsername,
         timeRange,
         apiKey,
         (message) =>
@@ -186,6 +219,7 @@ function App() {
       const aggregated = aggregateAlbums(recentTracks.items);
 
       if (aggregated.length === 0) {
+        setGeneratedResult(null);
         setRenderedAlbums([]);
         setNextExportPreview(null);
         setSummary(null);
@@ -224,6 +258,14 @@ function App() {
       const sorted = sortAlbums(aggregated, settings.rankingMode);
       const nextRenderedAlbums = sorted.slice(0, rows * columns);
 
+      setGeneratedResult({
+        query: {
+          username: trimmedUsername,
+          timeRange: settings.timeRange,
+          rankingMode: settings.rankingMode,
+        },
+        albums: sorted,
+      });
       setRenderedAlbums(nextRenderedAlbums);
       setSummary({
         scrobbles: recentTracks.items.length,
@@ -231,20 +273,15 @@ function App() {
         pages: recentTracks.pagesFetched,
         durationGaps,
       });
-      setResultsCopy(
-        `Showing the top ${nextRenderedAlbums.length} albums for ${settings.username.trim()}, ${
-          settings.rankingMode === "plays"
-            ? "ranked by album plays."
-            : "ranked by approximate listening time."
-        }`,
-      );
+      setResultsCopy(buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length));
       setStatus({
         tone: "success",
         message: "Collage generated successfully.",
       });
     } catch (error) {
       console.error(error);
-      const resumeState = getRecentTracksResumeState(settings.username.trim(), timeRange);
+      setGeneratedResult(null);
+      const resumeState = getRecentTracksResumeState(trimmedUsername, timeRange);
       const baseMessage = error instanceof Error ? error.message : "Something went wrong.";
       setRenderedAlbums([]);
       setNextExportPreview(null);
@@ -729,6 +766,29 @@ function loadSettings(): Settings {
 function getApiKey(): string {
   const value: unknown = import.meta.env.VITE_LASTFM_API_KEY;
   return typeof value === "string" ? value.trim() : "";
+}
+
+function matchesGeneratedQuery(
+  generatedResult: GeneratedResultState,
+  query: GeneratedResultState["query"],
+): boolean {
+  return (
+    generatedResult.query.username === query.username &&
+    generatedResult.query.timeRange === query.timeRange &&
+    generatedResult.query.rankingMode === query.rankingMode
+  );
+}
+
+function buildResultsCopy(
+  username: string,
+  rankingMode: RankingMode,
+  albumCount: number,
+): string {
+  return `Showing the top ${albumCount} albums for ${username}, ${
+    rankingMode === "plays"
+      ? "ranked by album plays."
+      : "ranked by approximate listening time."
+  }`;
 }
 
 function formatEta(milliseconds: number): string {
