@@ -42,6 +42,11 @@ export interface AlbumTrack {
   plays: number;
 }
 
+export interface MissingDurationEntry extends AlbumTrack {
+  trackKey: string;
+  checkedAt: number;
+}
+
 export interface AlbumEntry {
   artist: string;
   artistNames: Set<string>;
@@ -127,4 +132,13 @@ export type PreviewGridStyle = CSSProperties & {
 export interface ExportRenderOptions {
   showAlbumInfo: boolean;
   showMetric: boolean;
+}
+
+export interface HydrateListeningTimesResult {
+  missingDurations: MissingDurationEntry[];
+}
+
+export interface ResolveMissingDurationsResult {
+  missingDurations: MissingDurationEntry[];
+  resolvedCount: number;
 }

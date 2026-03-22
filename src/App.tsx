@@ -3,11 +3,16 @@ import { useEffect, useMemo, useState } from "react";
 import { renderExportBlob } from "./lib/collage";
 import {
   aggregateAlbums,
+  applyCachedDurations,
+  buildLastFmTrackUrl,
   buildTimeRange,
+  fetchMissingDurationsFromMusicBrainz,
   fetchRecentTracks,
   formatMetric,
+  getMissingDurationEntries,
   getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
+  saveTrackDurationOverride,
   sortAlbums,
 } from "./lib/lastfm";
 import type {
@@ -15,6 +20,7 @@ import type {
   ExportRenderOptions,
   FetchProgressState,
   GridSize,
+  MissingDurationEntry,
   PreviewGridStyle,
   RankingMode,
   Settings,
@@ -24,7 +30,7 @@ import type {
 } from "./types";
 
 const SETTINGS_KEY = "lastfm-collage-settings";
-type PreviewMode = "config" | "export";
+type PreviewMode = "config" | "export" | "missing-durations";
 const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "7d", label: "Last 7 days" },
   { value: "1m", label: "Last 30 days" },
@@ -73,6 +79,8 @@ function App() {
   const [summary, setSummary] = useState<SummaryState | null>(null);
   const [renderedAlbums, setRenderedAlbums] = useState<AlbumEntry[]>([]);
   const [generatedResult, setGeneratedResult] = useState<GeneratedResultState | null>(null);
+  const [missingDurations, setMissingDurations] = useState<MissingDurationEntry[]>([]);
+  const [durationOverrides, setDurationOverrides] = useState<Record<string, string>>({});
   const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
   const [exportPreviewUrl, setExportPreviewUrl] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("config");
@@ -116,6 +124,15 @@ function App() {
       buildResultsCopy(generatedQuery.username, generatedQuery.rankingMode, nextRenderedAlbums.length),
     );
   }, [columns, generatedQuery, generatedResult, rows]);
+
+  useEffect(() => {
+    if (
+      previewMode === "missing-durations" &&
+      (settings.rankingMode !== "listening-time" || missingDurations.length === 0)
+    ) {
+      setPreviewMode("config");
+    }
+  }, [missingDurations.length, previewMode, settings.rankingMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,6 +185,7 @@ function App() {
     const apiKey = getApiKey();
     if (!apiKey) {
       setGeneratedResult(null);
+      setMissingDurations([]);
       setStatus({
         tone: "error",
         message:
@@ -178,6 +196,7 @@ function App() {
 
     if (!trimmedUsername) {
       setGeneratedResult(null);
+      setMissingDurations([]);
       setStatus({
         tone: "error",
         message: "Enter a Last.fm username to continue.",
@@ -220,6 +239,7 @@ function App() {
 
       if (aggregated.length === 0) {
         setGeneratedResult(null);
+        setMissingDurations([]);
         setRenderedAlbums([]);
         setNextExportPreview(null);
         setSummary(null);
@@ -231,13 +251,13 @@ function App() {
         return;
       }
 
-      let durationGaps = 0;
+      let nextMissingDurations: MissingDurationEntry[] = [];
       if (isListeningTimeMode) {
         setStatus({
           tone: "info",
           message: "Step 2 of 2: Fetching track durations from Last.fm...",
         });
-        durationGaps = await hydrateApproximateListeningTimes(
+        const listeningTimeResult = await hydrateApproximateListeningTimes(
           aggregated,
           apiKey,
           (message) =>
@@ -253,6 +273,7 @@ function App() {
               progress,
             }),
         );
+        nextMissingDurations = listeningTimeResult.missingDurations;
       }
 
       const sorted = sortAlbums(aggregated, settings.rankingMode);
@@ -266,12 +287,14 @@ function App() {
         },
         albums: sorted,
       });
+      setMissingDurations(nextMissingDurations);
+      setDurationOverrides({});
       setRenderedAlbums(nextRenderedAlbums);
       setSummary({
         scrobbles: recentTracks.items.length,
         albums: aggregated.length,
         pages: recentTracks.pagesFetched,
-        durationGaps,
+        durationGaps: nextMissingDurations.length,
       });
       setResultsCopy(buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length));
       setStatus({
@@ -281,6 +304,7 @@ function App() {
     } catch (error) {
       console.error(error);
       setGeneratedResult(null);
+      setMissingDurations([]);
       const resumeState = getRecentTracksResumeState(trimmedUsername, timeRange);
       const baseMessage = error instanceof Error ? error.message : "Something went wrong.";
       setRenderedAlbums([]);
@@ -332,6 +356,116 @@ function App() {
     } finally {
       setIsBusy(false);
     }
+  }
+
+  async function handleMissingDurationFallbackFetch() {
+    if (!generatedResult || missingDurations.length === 0) {
+      return;
+    }
+
+    setIsBusy(true);
+    setStatus({
+      tone: "info",
+      message: "Trying MusicBrainz for missing track durations...",
+    });
+
+    try {
+      const fallbackResult = await fetchMissingDurationsFromMusicBrainz(
+        missingDurations,
+        (message) =>
+          setStatus((current) => ({
+            tone: "info",
+            message,
+            progress: current.progress,
+          })),
+        (progress) =>
+          setStatus({
+            tone: "info",
+            message: `Trying MusicBrainz for missing track durations... ${progress.completed} of ${progress.total}`,
+            progress,
+          }),
+      );
+      const nextAlbums = [...generatedResult.albums];
+      applyCachedDurations(nextAlbums);
+      const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
+      const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
+      const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
+
+      setGeneratedResult({
+        ...generatedResult,
+        albums: nextSortedAlbums,
+      });
+      setMissingDurations(nextMissingDurations);
+      setRenderedAlbums(nextRenderedAlbums);
+      setSummary((current) =>
+        current
+          ? {
+              ...current,
+              durationGaps: nextMissingDurations.length,
+            }
+          : current,
+      );
+      setStatus({
+        tone: fallbackResult.resolvedCount > 0 ? "success" : "info",
+        message:
+          fallbackResult.resolvedCount > 0
+            ? `MusicBrainz resolved ${fallbackResult.resolvedCount} missing duration${fallbackResult.resolvedCount === 1 ? "" : "s"}.`
+            : "MusicBrainz did not resolve any additional missing durations.",
+      });
+    } catch (error) {
+      console.error(error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "MusicBrainz lookup failed.",
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function handleDurationOverrideSave(track: MissingDurationEntry) {
+    const rawValue = durationOverrides[track.trackKey]?.trim() ?? "";
+    const seconds = Number(rawValue);
+    if (!rawValue || !Number.isFinite(seconds) || seconds <= 0) {
+      setStatus({
+        tone: "error",
+        message: `Enter a valid duration in seconds for ${track.name}.`,
+      });
+      return;
+    }
+
+    if (!generatedResult) {
+      return;
+    }
+
+    saveTrackDurationOverride(track, seconds * 1000);
+    const nextAlbums = [...generatedResult.albums];
+    applyCachedDurations(nextAlbums);
+    const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
+    const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
+
+    setGeneratedResult({
+      ...generatedResult,
+      albums: nextSortedAlbums,
+    });
+    setMissingDurations(nextMissingDurations);
+    setDurationOverrides((current) => {
+      const next = { ...current };
+      delete next[track.trackKey];
+      return next;
+    });
+    setSummary((current) =>
+      current
+        ? {
+            ...current,
+            durationGaps: nextMissingDurations.length,
+          }
+        : current,
+    );
+    setStatus({
+      tone: "success",
+      message: `Saved a local duration override for ${track.name}.`,
+    });
   }
 
   function setNextExportPreview(nextBlob: Blob | null) {
@@ -529,6 +663,16 @@ function App() {
               >
                 True PNG preview
               </button>
+              {settings.rankingMode === "listening-time" && missingDurations.length > 0 ? (
+                <button
+                  type="button"
+                  className={previewMode === "missing-durations" ? "is-active" : ""}
+                  onClick={() => setPreviewMode("missing-durations")}
+                  aria-pressed={previewMode === "missing-durations"}
+                >
+                  Missing durations ({missingDurations.length})
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -537,6 +681,20 @@ function App() {
               albums={renderedAlbums}
               columns={columns}
               rankingMode={settings.rankingMode}
+            />
+          ) : previewMode === "missing-durations" ? (
+            <MissingDurationPanel
+              items={missingDurations}
+              durationOverrides={durationOverrides}
+              isFetchingFallback={isBusy}
+              onDurationChange={(trackKey, value) =>
+                setDurationOverrides((current) => ({
+                  ...current,
+                  [trackKey]: value,
+                }))
+              }
+              onFetchFallback={() => void handleMissingDurationFallbackFetch()}
+              onSave={handleDurationOverrideSave}
             />
           ) : (
             <ExportPreview
@@ -598,6 +756,81 @@ function FetchProgress({ progress }: FetchProgressProps) {
 
 interface SummaryPanelProps {
   summary: SummaryState | null;
+}
+
+interface MissingDurationPanelProps {
+  items: MissingDurationEntry[];
+  durationOverrides: Record<string, string>;
+  isFetchingFallback: boolean;
+  onDurationChange: (trackKey: string, value: string) => void;
+  onFetchFallback: () => void;
+  onSave: (track: MissingDurationEntry) => void;
+}
+
+function MissingDurationPanel({
+  items,
+  durationOverrides,
+  isFetchingFallback,
+  onDurationChange,
+  onFetchFallback,
+  onSave,
+}: MissingDurationPanelProps) {
+  if (items.length === 0) {
+    return (
+      <div className="empty-state missing-duration-empty">
+        <p>No missing durations remain.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="missing-duration-panel">
+      <p className="results-copy">
+        These tracks are missing duration metadata. You can open the track page on Last.fm to fix
+        it globally, or save a local override in seconds for this browser.
+      </p>
+      <div className="missing-duration-toolbar">
+        <button type="button" onClick={onFetchFallback} disabled={isFetchingFallback}>
+          {isFetchingFallback ? "Trying MusicBrainz..." : "Try fetching from MusicBrainz"}
+        </button>
+      </div>
+      <div className="missing-duration-list">
+        {items.map((track) => (
+          <article key={track.trackKey} className="missing-duration-item">
+            <div className="missing-duration-copy">
+              <strong>{track.name}</strong>
+              <span>
+                {track.artist} - {track.album}
+              </span>
+            </div>
+            <div className="missing-duration-actions">
+              <a
+                className="secondary-link"
+                href={buildLastFmTrackUrl(track)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Fix on Last.fm
+              </a>
+              <label className="duration-override-field">
+                <span>Local duration (sec)</span>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={durationOverrides[track.trackKey] ?? ""}
+                  onChange={(event) => onDurationChange(track.trackKey, event.target.value)}
+                />
+              </label>
+              <button type="button" onClick={() => onSave(track)}>
+                Save local override
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function SummaryPanel({ summary }: SummaryPanelProps) {

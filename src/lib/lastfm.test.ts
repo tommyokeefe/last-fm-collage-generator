@@ -2,6 +2,7 @@ import {
   aggregateAlbums,
   buildTimeRange,
   createRequestScheduler,
+  fetchMissingDurationsFromMusicBrainz,
   fetchRecentTracks,
   formatMetric,
   getRecentTracksResumeState,
@@ -116,9 +117,9 @@ describe("lastfm helpers", () => {
       },
     ]);
 
-    const durationGaps = await hydrateApproximateListeningTimes(albums, "test-key");
+    const result = await hydrateApproximateListeningTimes(albums, "test-key");
 
-    expect(durationGaps).toBe(1);
+    expect(result.missingDurations).toHaveLength(1);
     expect(warnSpy).toHaveBeenCalledWith(
       '[lastfm-duration-gap] Missing duration metadata for "Track Missing Duration" on album "Album A" by Artist One.',
     );
@@ -215,6 +216,57 @@ describe("lastfm helpers", () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(albums[0]?.approximateListeningMs).toBe(0);
+    fetchSpy.mockRestore();
+  });
+
+  it("tries MusicBrainz for unresolved missing durations", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          recordings: [
+            {
+              title: "Track 1",
+              length: 181000,
+              score: "100",
+              releases: [{ title: "Album A" }],
+              "artist-credit": [{ name: "Artist One" }],
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const tracks = [
+      {
+        artist: "Artist One",
+        album: "Album A",
+        name: "Track 1",
+        plays: 1,
+        trackKey: "artist one::track 1",
+        checkedAt: 0,
+      },
+    ];
+
+    const result = await fetchMissingDurationsFromMusicBrainz(tracks);
+
+    expect(result.resolvedCount).toBe(1);
+    expect(result.missingDurations).toEqual([]);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("musicbrainz.org/ws/2/recording"),
+      expect.objectContaining({
+        headers: {
+          Accept: "application/json",
+        },
+      }),
+    );
+    expect(
+      JSON.parse(window.localStorage.getItem("lastfm-collage-duration-cache") ?? "{}"),
+    ).toMatchObject({
+      "artist one::track 1": {
+        duration: 181000,
+      },
+    });
+
     fetchSpy.mockRestore();
   });
 

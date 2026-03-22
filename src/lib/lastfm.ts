@@ -2,8 +2,10 @@ import type {
   AlbumEntry,
   AlbumTrack,
   FetchProgressState,
+  HydrateListeningTimesResult,
   LastFmErrorResponse,
   LastFmImage,
+  MissingDurationEntry,
   LastFmRecentTrack,
   LastFmRecentTracksResponse,
   LastFmTextField,
@@ -11,14 +13,17 @@ import type {
   RankingMode,
   RecentTracksResult,
   RecentTracksResumeState,
+  ResolveMissingDurationsResult,
   TimeRange,
   TimeRangeValue,
 } from "../types";
 
 const LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/";
+const MUSICBRAINZ_API_URL = "https://musicbrainz.org/ws/2/recording";
 const DURATION_CACHE_KEY = "lastfm-collage-duration-cache";
 const RECENT_TRACKS_CHECKPOINT_KEY = "lastfm-collage-recent-tracks-checkpoint";
 const LASTFM_MIN_REQUEST_INTERVAL_MS = 200;
+const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
 const MISSING_DURATION_RETRY_AFTER_MS = 60 * 60 * 1000;
 const DAYS_BY_RANGE: Record<Exclude<TimeRangeValue, "overall">, number> = {
   "7d": 7,
@@ -32,6 +37,9 @@ const durationCache = loadDurationCache();
 const lastFmRequestScheduler = createRequestScheduler(
   import.meta.env.MODE === "test" ? 0 : LASTFM_MIN_REQUEST_INTERVAL_MS,
 );
+const musicBrainzRequestScheduler = createRequestScheduler(
+  import.meta.env.MODE === "test" ? 0 : MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS,
+);
 
 interface DurationCacheEntry {
   duration: number;
@@ -44,6 +52,25 @@ interface RecentTracksCheckpoint {
   totalPages: number;
   startedAt: number;
   items: LastFmRecentTrack[];
+}
+
+interface MusicBrainzRecording {
+  title?: string;
+  length?: number | null;
+  score?: number | string;
+  releases?: Array<{
+    title?: string;
+  }>;
+  "artist-credit"?: Array<{
+    name?: string;
+    artist?: {
+      name?: string;
+    };
+  }>;
+}
+
+interface MusicBrainzRecordingSearchResponse {
+  recordings?: MusicBrainzRecording[];
 }
 
 export function buildTimeRange(value: TimeRangeValue): TimeRange {
@@ -211,7 +238,7 @@ export async function hydrateApproximateListeningTimes(
   apiKey: string,
   onStatus?: (message: string) => void,
   onProgress?: (progress: FetchProgressState) => void,
-): Promise<number> {
+): Promise<HydrateListeningTimesResult> {
   syncDurationCacheFromStorage();
   const uniqueTracks = new Map<string, AlbumTrack>();
 
@@ -223,7 +250,6 @@ export async function hydrateApproximateListeningTimes(
     }
   }
 
-  let durationGaps = 0;
   const uncachedTracks = [...uniqueTracks.entries()].filter(
     ([trackKey]) => shouldFetchDuration(durationCache[trackKey]),
   );
@@ -257,7 +283,6 @@ export async function hydrateApproximateListeningTimes(
       };
       if (!normalizedDuration) {
         warnMissingDuration(track);
-        durationGaps += 1;
       }
     } catch (error) {
       console.warn("Duration lookup failed", track, error);
@@ -266,7 +291,6 @@ export async function hydrateApproximateListeningTimes(
         checkedAt: Date.now(),
       };
       warnMissingDuration(track);
-      durationGaps += 1;
     } finally {
       completedRequests += 1;
       if (uncachedTracks.length > 0) {
@@ -287,6 +311,75 @@ export async function hydrateApproximateListeningTimes(
   });
 
   persistDurationCache(durationCache);
+  applyCachedDurations(albums);
+
+  return {
+    missingDurations: getMissingDurationEntries(albums),
+  };
+}
+
+export async function fetchMissingDurationsFromMusicBrainz(
+  tracks: MissingDurationEntry[],
+  onStatus?: (message: string) => void,
+  onProgress?: (progress: FetchProgressState) => void,
+): Promise<ResolveMissingDurationsResult> {
+  syncDurationCacheFromStorage();
+  const pendingTracks = tracks.filter((track) => readCachedDuration(durationCache[track.trackKey]) === 0);
+  let completedRequests = 0;
+  let resolvedCount = 0;
+  const startedAt = Date.now();
+
+  if (pendingTracks.length > 0) {
+    onProgress?.({
+      completed: 0,
+      total: pendingTracks.length,
+      estimatedRemainingMs: 0,
+      unitLabel: "Tracks",
+    });
+  } else {
+    onStatus?.("No unresolved durations remain.");
+  }
+
+  await mapWithConcurrency(pendingTracks, 1, async (track) => {
+    try {
+      const duration = await lookupMusicBrainzTrackDuration(track);
+      durationCache[track.trackKey] = {
+        duration,
+        checkedAt: Date.now(),
+      };
+      if (duration > 0) {
+        resolvedCount += 1;
+      }
+    } catch (error) {
+      console.warn("MusicBrainz duration lookup failed", track, error);
+    } finally {
+      completedRequests += 1;
+      if (pendingTracks.length > 0) {
+        const elapsedMs = Math.max(Date.now() - startedAt, 0);
+        const averageRequestMs = completedRequests > 0 ? elapsedMs / completedRequests : 0;
+        onProgress?.({
+          completed: completedRequests,
+          total: pendingTracks.length,
+          estimatedRemainingMs: Math.max(pendingTracks.length - completedRequests, 0) * averageRequestMs,
+          unitLabel: "Tracks",
+        });
+        onStatus?.(
+          `Trying MusicBrainz for missing track durations... ${completedRequests}/${pendingTracks.length}`,
+        );
+      }
+    }
+  });
+
+  persistDurationCache(durationCache);
+
+  return {
+    resolvedCount,
+    missingDurations: buildMissingDurationEntriesFromTracks(tracks),
+  };
+}
+
+export function applyCachedDurations(albums: AlbumEntry[]): void {
+  syncDurationCacheFromStorage();
 
   for (const album of albums) {
     let total = 0;
@@ -297,8 +390,41 @@ export async function hydrateApproximateListeningTimes(
 
     album.approximateListeningMs = total;
   }
+}
 
-  return durationGaps;
+export function getMissingDurationEntries(albums: AlbumEntry[]): MissingDurationEntry[] {
+  syncDurationCacheFromStorage();
+  const missingTracks = new Map<string, MissingDurationEntry>();
+
+  for (const album of albums) {
+    for (const [trackKey, track] of album.tracks.entries()) {
+      const cacheEntry = durationCache[trackKey];
+      if (readCachedDuration(cacheEntry) > 0 || missingTracks.has(trackKey)) {
+        continue;
+      }
+
+      missingTracks.set(trackKey, {
+        ...track,
+        trackKey,
+        checkedAt: cacheEntry?.checkedAt ?? 0,
+      });
+    }
+  }
+
+  return sortMissingDurationEntries([...missingTracks.values()]);
+}
+
+export function saveTrackDurationOverride(track: AlbumTrack, durationMs: number): void {
+  const normalizedDuration = Math.max(Math.round(durationMs), 0);
+  durationCache[buildKey(track.artist, track.name)] = {
+    duration: normalizedDuration,
+    checkedAt: Date.now(),
+  };
+  persistDurationCache(durationCache);
+}
+
+export function buildLastFmTrackUrl(track: AlbumTrack): string {
+  return `https://www.last.fm/music/${encodeURIComponent(track.artist)}/_/${encodeURIComponent(track.name)}`;
 }
 
 export function sortAlbums(albums: AlbumEntry[], rankingMode: RankingMode): AlbumEntry[] {
@@ -340,6 +466,34 @@ function warnMissingDuration(track: AlbumTrack): void {
   console.warn(
     `[lastfm-duration-gap] Missing duration metadata for "${track.name}" on album "${track.album}" by ${track.artist}.`,
   );
+}
+
+async function lookupMusicBrainzTrackDuration(track: AlbumTrack): Promise<number> {
+  const query = [
+    `recording:"${escapeMusicBrainzQueryValue(track.name)}"`,
+    `artist:"${escapeMusicBrainzQueryValue(track.artist)}"`,
+    `release:"${escapeMusicBrainzQueryValue(track.album)}"`,
+  ].join(" AND ");
+  const url = new URL(MUSICBRAINZ_API_URL);
+  url.search = new URLSearchParams({
+    query,
+    fmt: "json",
+    limit: "5",
+  }).toString();
+
+  const response = await musicBrainzRequestScheduler.schedule(() =>
+    fetch(url.toString(), {
+      headers: {
+        Accept: "application/json",
+      },
+    }),
+  );
+  if (!response.ok) {
+    throw new Error(`MusicBrainz request failed with HTTP ${response.status}.`);
+  }
+
+  const payload = (await response.json()) as MusicBrainzRecordingSearchResponse;
+  return pickMusicBrainzDuration(payload.recordings ?? [], track);
 }
 
 async function callLastFm<T extends object>(
@@ -439,6 +593,32 @@ function buildKey(left: string, right: string): string {
   return `${normalizeForKey(left)}::${normalizeForKey(right)}`;
 }
 
+function sortMissingDurationEntries(entries: MissingDurationEntry[]): MissingDurationEntry[] {
+  return [...entries].sort((left, right) =>
+    `${left.artist} ${left.album} ${left.name}`.localeCompare(
+      `${right.artist} ${right.album} ${right.name}`,
+    ),
+  );
+}
+
+function buildMissingDurationEntriesFromTracks(tracks: MissingDurationEntry[]): MissingDurationEntry[] {
+  return sortMissingDurationEntries(
+    tracks.flatMap((track) => {
+      const cacheEntry = durationCache[track.trackKey];
+      if (readCachedDuration(cacheEntry) > 0) {
+        return [];
+      }
+
+      return [
+        {
+          ...track,
+          checkedAt: cacheEntry?.checkedAt ?? track.checkedAt,
+        },
+      ];
+    }),
+  );
+}
+
 function resolveAlbumKey(
   albums: Map<string, AlbumEntry>,
   album: string,
@@ -467,6 +647,63 @@ function formatArtistNames(artistNames: Set<string>): string {
 
 function normalizeForKey(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function escapeMusicBrainzQueryValue(value: string): string {
+  return value.replace(/(["\\])/g, "\\$1").trim();
+}
+
+function pickMusicBrainzDuration(recordings: MusicBrainzRecording[], track: AlbumTrack): number {
+  const normalizedTrack = normalizeForKey(track.name);
+  const normalizedArtist = normalizeForKey(track.artist);
+  const normalizedAlbum = normalizeForKey(track.album);
+  const candidates = recordings
+    .map((recording) => ({
+      duration: typeof recording.length === "number" && recording.length > 0 ? recording.length : 0,
+      normalizedTitle: normalizeForKey(recording.title ?? ""),
+      normalizedArtists: readMusicBrainzArtists(recording),
+      normalizedReleases: (recording.releases ?? [])
+        .map((release) => normalizeForKey(release.title ?? ""))
+        .filter(Boolean),
+      score:
+        typeof recording.score === "string"
+          ? Number.parseInt(recording.score, 10) || 0
+          : typeof recording.score === "number"
+            ? recording.score
+            : 0,
+    }))
+    .filter((recording) => recording.duration > 0)
+    .sort((left, right) => right.score - left.score);
+
+  const exactReleaseMatch = candidates.find(
+    (candidate) =>
+      candidate.normalizedTitle === normalizedTrack &&
+      candidate.normalizedArtists.includes(normalizedArtist) &&
+      candidate.normalizedReleases.includes(normalizedAlbum),
+  );
+  if (exactReleaseMatch) {
+    return exactReleaseMatch.duration;
+  }
+
+  const exactArtistMatch = candidates.find(
+    (candidate) =>
+      candidate.normalizedTitle === normalizedTrack &&
+      candidate.normalizedArtists.includes(normalizedArtist),
+  );
+  if (exactArtistMatch) {
+    return exactArtistMatch.duration;
+  }
+
+  const exactTrackMatch = candidates.find(
+    (candidate) => candidate.normalizedTitle === normalizedTrack,
+  );
+  return exactTrackMatch?.duration ?? 0;
+}
+
+function readMusicBrainzArtists(recording: MusicBrainzRecording): string[] {
+  return (recording["artist-credit"] ?? [])
+    .map((credit) => normalizeForKey(credit.artist?.name ?? credit.name ?? ""))
+    .filter(Boolean);
 }
 
 function buildRecentTracksQueryKey(username: string, timeRange: TimeRange): string {

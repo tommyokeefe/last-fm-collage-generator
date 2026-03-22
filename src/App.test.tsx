@@ -522,4 +522,127 @@ describe("App", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Showing the top 1 albums for tommy, ranked by album plays.")).toBeInTheDocument();
   });
+
+  it("shows missing durations and lets users save a local override", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "123" },
+                },
+              ],
+              "@attr": { totalPages: "1" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
+      );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Missing durations (1)" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Missing durations (1)" }));
+
+    const lastFmLink = screen.getByRole("link", { name: "Fix on Last.fm" });
+    expect(lastFmLink).toHaveAttribute(
+      "href",
+      "https://www.last.fm/music/Artist%20One/_/Track%201",
+    );
+
+    fireEvent.change(screen.getByLabelText("Local duration (sec)"), {
+      target: { value: "180" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save local override" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Missing durations (1)" })).not.toBeInTheDocument();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("tries MusicBrainz for missing durations on demand", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "123" },
+                },
+              ],
+              "@attr": { totalPages: "1" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recordings: [
+              {
+                title: "Track 1",
+                length: 181000,
+                score: "100",
+                releases: [{ title: "Album A" }],
+                "artist-credit": [{ name: "Artist One" }],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Missing durations (1)" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Missing durations (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try fetching from MusicBrainz" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("MusicBrainz resolved 1 missing duration.")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: "Missing durations (1)" })).not.toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
 });

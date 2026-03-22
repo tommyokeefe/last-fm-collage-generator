@@ -320,6 +320,73 @@ button:disabled {
   margin-top: 1.25rem;
 }
 
+.missing-duration-panel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.missing-duration-toolbar {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.missing-duration-toolbar button {
+  width: auto;
+}
+
+.missing-duration-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.missing-duration-item {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.missing-duration-copy {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.missing-duration-copy span {
+  color: var(--text-muted);
+}
+
+.missing-duration-actions {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(180px, 220px) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.secondary-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: var(--panel-muted);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.duration-override-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.duration-override-field span {
+  font-size: 0.9rem;
+}
+
 .empty-state {
   display: grid;
   place-items: center;
