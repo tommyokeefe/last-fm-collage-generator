@@ -77,6 +77,25 @@ const DEFAULT_SETTINGS: Settings = {
   showAlbumInfo: true,
   showMetric: true,
 };
+const panelClass =
+  "rounded-panel border border-border/12 bg-surface shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface))]";
+const sectionPanelClass = `${panelClass} p-6 max-sm:p-4`;
+const fieldClass =
+  "w-full rounded-control border border-border/12 bg-surface-muted px-4 py-[0.85rem] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
+const secondaryButtonClass =
+  "inline-flex min-h-12 items-center justify-center rounded-control border border-border/12 bg-surface-muted px-4 py-[0.85rem] text-sm font-medium text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:-translate-y-px hover:border-border/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
+const primaryButtonClass =
+  "inline-flex min-h-12 items-center justify-center rounded-control border border-accent bg-accent px-4 py-[0.85rem] text-sm font-semibold text-accent-foreground shadow-[0_12px_24px_rgb(var(--theme-shadow-color)/0.16)] transition hover:-translate-y-px hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
+const toggleGroupClass =
+  "inline-flex flex-wrap gap-2 rounded-[14px] border border-border/12 bg-foreground/[0.03] p-1.5 backdrop-blur-sm";
+const toggleButtonClass =
+  "min-w-0 rounded-control border border-transparent bg-transparent px-4 py-2.5 text-sm font-medium text-muted transition hover:-translate-y-px hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+const emptyStateClass =
+  "grid min-h-[260px] place-items-center rounded-[18px] border border-dashed border-border/12 bg-foreground/[0.03] text-muted [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)]";
+
+function classNames(...values: Array<string | false | null | undefined>) {
+  return values.filter(Boolean).join(" ");
+}
 
 interface GeneratedResultState {
   query: {
@@ -925,22 +944,26 @@ function App() {
   }
 
   return (
-    <div className="page-shell">
-      <header className="hero">
-        <div className="hero-copy-block">
-          <h1>Last.fm Collage Generator</h1>
-          <p className="hero-copy">
+    <div className="mx-auto min-h-screen w-[min(1200px,calc(100%-2rem))] py-8 max-sm:w-[min(100%-1rem,100%)]">
+      <header className="mb-8 flex items-start justify-between gap-4 max-lg:flex-col max-lg:items-stretch">
+        <div className="grid gap-3">
+          <h1 className="text-[clamp(2rem,3vw,3rem)]">Last.fm Collage Generator</h1>
+          <p className="max-w-[64ch] text-muted">
             Last FM album cover collage generation based on play count or
             approximate listening time.
           </p>
         </div>
-        <div className="hero-actions">
-          <div className="theme-mode-toggle" role="group" aria-label="Theme mode">
+        <div className="flex justify-end">
+          <div className={toggleGroupClass} role="group" aria-label="Theme mode">
             {THEME_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 type="button"
-                className={themePreference === option.value ? "is-active" : ""}
+                className={classNames(
+                  toggleButtonClass,
+                  themePreference === option.value &&
+                    "border-border/12 bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                )}
                 aria-pressed={themePreference === option.value}
                 onClick={() => {
                   setThemePreference(option.value);
@@ -954,13 +977,14 @@ function App() {
         </div>
       </header>
 
-      <main className="layout">
-        <section className="panel controls-panel">
-          <h2>Generate a collage</h2>
-          <form className="controls-form" onSubmit={(event) => void handleGenerate(event)}>
-            <label>
+      <main className="grid gap-6 lg:grid-cols-[minmax(290px,380px)_minmax(0,1fr)]">
+        <section className={sectionPanelClass}>
+          <h2 className="text-2xl font-semibold text-foreground">Generate a collage</h2>
+          <form className="mt-4 grid gap-4" onSubmit={(event) => void handleGenerate(event)}>
+            <label className="grid gap-2">
               <span>Last.fm username</span>
               <input
+                className={fieldClass}
                 type="text"
                 autoComplete="username"
                 placeholder="Enter a Last.fm username"
@@ -976,9 +1000,10 @@ function App() {
               />
             </label>
 
-            <label>
+            <label className="grid gap-2">
               <span>Time range</span>
               <select
+                className={fieldClass}
                 value={settings.timeRange}
                 onChange={(event) =>
                   setSettings((current) => ({
@@ -996,9 +1021,10 @@ function App() {
               </select>
             </label>
 
-            <label>
+            <label className="grid gap-2">
               <span>Grid size</span>
               <select
+                className={fieldClass}
                 value={settings.gridSize}
                 onChange={(event) =>
                   setSettings((current) => ({
@@ -1016,9 +1042,9 @@ function App() {
               </select>
             </label>
 
-            <fieldset className="mode-fieldset">
-              <legend>Album ranking mode</legend>
-              <label className="radio-option">
+            <fieldset className="grid gap-2 rounded-2xl border border-border/12 p-4">
+              <legend className="px-1 font-semibold text-foreground">Album ranking mode</legend>
+              <label className="grid grid-cols-[auto_1fr] items-center gap-3">
                 <input
                   type="radio"
                   name="rankingMode"
@@ -1029,7 +1055,7 @@ function App() {
                 />
                 <span>Most plays per album</span>
               </label>
-              <label className="radio-option">
+              <label className="grid grid-cols-[auto_1fr] items-center gap-3">
                 <input
                   type="radio"
                   name="rankingMode"
@@ -1042,9 +1068,9 @@ function App() {
               </label>
             </fieldset>
 
-            <fieldset className="mode-fieldset">
-              <legend>True PNG preview and export</legend>
-              <label className="checkbox-option">
+            <fieldset className="grid gap-2 rounded-2xl border border-border/12 p-4">
+              <legend className="px-1 font-semibold text-foreground">True PNG preview and export</legend>
+              <label className="grid grid-cols-[auto_1fr] items-center gap-3">
                 <input
                   type="checkbox"
                   checked={settings.showAlbumInfo}
@@ -1058,7 +1084,7 @@ function App() {
                 />
                 <span>Show album and artist text</span>
               </label>
-              <label className="checkbox-option">
+              <label className="grid grid-cols-[auto_1fr] items-center gap-3">
                 <input
                   type="checkbox"
                   checked={settings.showMetric}
@@ -1074,11 +1100,16 @@ function App() {
               </label>
             </fieldset>
 
-            <div className="button-row">
-              <button type="submit" disabled={isBusy}>
+            <div className="flex gap-3 max-sm:flex-col">
+              <button className={classNames(primaryButtonClass, "w-full")} type="submit" disabled={isBusy}>
                 {isBusy ? "Generating..." : "Generate collage"}
               </button>
-              <button type="button" onClick={() => void handleExport()} disabled={!canExport}>
+              <button
+                className={classNames(secondaryButtonClass, "w-full")}
+                type="button"
+                onClick={() => void handleExport()}
+                disabled={!canExport}
+              >
                 Export PNG
               </button>
             </div>
@@ -1088,16 +1119,20 @@ function App() {
           <SummaryPanel summary={summary} />
         </section>
 
-        <section className="panel results-panel">
-          <div className="results-header">
+        <section className={sectionPanelClass}>
+          <div className="flex items-start justify-between gap-4 max-lg:flex-col">
             <div>
-              <h2>Preview</h2>
-              <p className="results-copy">{resultsCopy}</p>
+               <h2 className="text-2xl font-semibold text-foreground">Preview</h2>
+              <p className="max-w-[64ch] text-muted">{resultsCopy}</p>
             </div>
-            <div className="preview-mode-toggle" role="tablist" aria-label="Preview modes">
+            <div className={toggleGroupClass} role="tablist" aria-label="Preview modes">
               <button
                 type="button"
-                className={previewMode === "config" ? "is-active" : ""}
+                className={classNames(
+                  toggleButtonClass,
+                  previewMode === "config" &&
+                    "border-border/12 bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                )}
                 onClick={() => setPreviewMode("config")}
                 aria-pressed={previewMode === "config"}
               >
@@ -1105,7 +1140,11 @@ function App() {
               </button>
               <button
                 type="button"
-                className={previewMode === "export" ? "is-active" : ""}
+                className={classNames(
+                  toggleButtonClass,
+                  previewMode === "export" &&
+                    "border-border/12 bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                )}
                 onClick={() => setPreviewMode("export")}
                 aria-pressed={previewMode === "export"}
               >
@@ -1114,7 +1153,11 @@ function App() {
               {missingDataAlbums.length > 0 ? (
                 <button
                   type="button"
-                  className={previewMode === "missing-data" ? "is-active" : ""}
+                  className={classNames(
+                    toggleButtonClass,
+                    previewMode === "missing-data" &&
+                      "border-border/12 bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                  )}
                   onClick={() => setPreviewMode("missing-data")}
                   aria-pressed={previewMode === "missing-data"}
                 >
@@ -1196,13 +1239,11 @@ interface StatusBannerProps {
 }
 
 function StatusBanner({ status }: StatusBannerProps) {
-  const className = [
-    "status-banner",
-    status.tone === "error" ? "is-error" : "",
-    status.tone === "success" ? "is-success" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const className = classNames(
+    "mt-4 rounded-[14px] border border-border/12 bg-foreground/[0.03] p-4 text-muted",
+    status.tone === "error" && "border-red-600/35 text-red-700 dark:text-red-200",
+    status.tone === "success" && "border-emerald-600/30 text-emerald-700 dark:text-emerald-200",
+  );
 
   return (
     <div className={className}>
@@ -1218,7 +1259,7 @@ interface StatusContentProps {
 function StatusContent({ status }: StatusContentProps) {
   return (
     <>
-      <div className="status-message">{status.message}</div>
+      <div className="leading-6">{status.message}</div>
       {status.progress ? <FetchProgress progress={status.progress} /> : null}
     </>
   );
@@ -1229,9 +1270,10 @@ interface FetchProgressProps {
 }
 
 function FetchProgress({ progress }: FetchProgressProps) {
+  const completionRatio = progress.total > 0 ? (progress.completed / progress.total) * 100 : 0;
   return (
-    <div className="status-progress">
-      <div className="status-progress-meta">
+    <div className="mt-3.5 grid gap-2">
+      <div className="flex justify-between gap-4 text-sm">
         <span>
           {progress.unitLabel} {progress.completed} of {progress.total}
         </span>
@@ -1241,8 +1283,12 @@ function FetchProgress({ progress }: FetchProgressProps) {
             : `ETA ${formatEta(progress.estimatedRemainingMs)}`}
         </span>
       </div>
-      <progress value={progress.completed} max={progress.total}>
-        {progress.completed} of {progress.total}
+      <progress
+        className="h-3 w-full overflow-hidden rounded-full accent-accent"
+        value={progress.completed}
+        max={progress.total}
+      >
+        {Math.max(0, Math.min(100, completionRatio))}%
       </progress>
     </div>
   );
@@ -1253,24 +1299,24 @@ interface ProgressOverlayProps {
 }
 
 function ProgressOverlay({ status }: ProgressOverlayProps) {
-  const className = [
-    "status-banner",
-    "progress-overlay-status",
-    status.tone === "error" ? "is-error" : "",
-    status.tone === "success" ? "is-success" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const className = classNames(
+    "rounded-[14px] border border-border/12 bg-foreground/[0.03] p-4 text-muted",
+    status.tone === "error" && "border-red-600/35 text-red-700 dark:text-red-200",
+    status.tone === "success" && "border-emerald-600/30 text-emerald-700 dark:text-emerald-200",
+  );
 
   return (
-    <div className="progress-overlay" role="presentation">
+    <div
+      className="fixed inset-0 z-30 grid place-items-center overflow-y-auto bg-surface-backdrop/40 p-4"
+      role="presentation"
+    >
       <div
-        className="progress-overlay-panel"
+        className="w-full max-w-[440px] rounded-panel border border-border/12 bg-surface/95 p-4 shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface)/0.95)] backdrop-blur"
         role="dialog"
         aria-modal="true"
         aria-label="Operation in progress"
       >
-        <div className="progress-overlay-heading">Working...</div>
+        <div className="mb-3 text-xs font-bold uppercase tracking-[0.08em] text-muted">Working...</div>
         <div className={className}>
           <StatusContent status={status} />
         </div>
@@ -1317,25 +1363,36 @@ function AlbumEditModal({
   onSave,
 }: AlbumEditModalProps) {
   return (
-    <div className="modal-backdrop" role="presentation">
-      <div className="modal-shell" role="dialog" aria-modal="true" aria-label="Edit album information">
-        <div className="modal-header">
+    <div
+      className="fixed inset-0 z-20 grid place-items-center overflow-y-auto bg-surface-backdrop/80 p-4"
+      role="presentation"
+    >
+      <div
+        className="max-h-[calc(100vh-2rem)] w-full max-w-[760px] overflow-y-auto rounded-panel border border-border/12 bg-surface p-5 shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface))]"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit album information"
+      >
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <h2>Edit album information</h2>
-            <p className="results-copy">
+             <h2 className="text-2xl font-semibold text-foreground">Edit album information</h2>
+            <p className="max-w-[64ch] text-muted">
               Update the current collage entry by changing its image, title, artist label, or track durations.
             </p>
           </div>
-          <button type="button" className="modal-close-button" onClick={onClose}>
+          <button type="button" className={secondaryButtonClass} onClick={onClose}>
             Close
           </button>
         </div>
-        <div className="album-edit-tabs" role="tablist" aria-label="Album edit sections">
+        <div className="mt-4 flex flex-wrap gap-3" role="tablist" aria-label="Album edit sections">
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === "details"}
-            className={activeTab === "details" ? "is-active" : ""}
+            className={classNames(
+              secondaryButtonClass,
+              activeTab === "details" && "border-accent bg-foreground/8",
+            )}
             onClick={() => onTabChange("details")}
           >
             Image and titles
@@ -1344,52 +1401,58 @@ function AlbumEditModal({
             type="button"
             role="tab"
             aria-selected={activeTab === "tracks"}
-            className={activeTab === "tracks" ? "is-active" : ""}
+            className={classNames(
+              secondaryButtonClass,
+              activeTab === "tracks" && "border-accent bg-foreground/8",
+            )}
             onClick={() => onTabChange("tracks")}
           >
             Track information
           </button>
         </div>
         {activeTab === "details" ? (
-          <div className="album-edit-layout">
-            <div className="album-edit-preview">
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
+            <div className="overflow-hidden rounded-2xl border border-border/12 bg-foreground/[0.03]">
               {draft.imageUrl ? (
-                <img src={draft.imageUrl} alt={`${draft.album} by ${draft.artist}`} />
+                <img className="block aspect-square w-full object-cover" src={draft.imageUrl} alt={`${draft.album} by ${draft.artist}`} />
               ) : (
-                <div className="empty-state album-edit-placeholder">
+                <div className={classNames(emptyStateClass, "min-h-[220px] rounded-none border-0")}>
                   <p>No image set.</p>
                 </div>
               )}
             </div>
-            <div className="album-edit-fields">
-              <label>
+            <div className="grid gap-3.5">
+              <label className="grid gap-1.5">
                 <span>Album title</span>
                 <input
+                  className={fieldClass}
                   type="text"
                   value={draft.album}
                   onChange={(event) => onChange("album", event.target.value)}
                 />
               </label>
-              <label>
+              <label className="grid gap-1.5">
                 <span>Artist label</span>
                 <input
+                  className={fieldClass}
                   type="text"
                   value={draft.artist}
                   onChange={(event) => onChange("artist", event.target.value)}
                 />
               </label>
-              <label>
+              <label className="grid gap-1.5">
                 <span>Image URL</span>
                 <input
+                  className={fieldClass}
                   type="url"
                   placeholder="https://example.com/cover.jpg"
                   value={draft.imageUrl}
                   onChange={(event) => onChange("imageUrl", event.target.value)}
                 />
               </label>
-              <div className="album-edit-actions">
+              <div className="flex flex-wrap items-center gap-3">
                 <a
-                  className="secondary-link"
+                  className={secondaryButtonClass}
                   href={buildLastFmAlbumUrl({
                     artist: album.sourceArtist,
                     album: album.sourceAlbum,
@@ -1399,17 +1462,17 @@ function AlbumEditModal({
                 >
                   Update artwork on Last.fm
                 </a>
-                <button type="button" onClick={onRefreshArtwork} disabled={isRefreshingArtwork}>
+                <button className={secondaryButtonClass} type="button" onClick={onRefreshArtwork} disabled={isRefreshingArtwork}>
                   {isRefreshingArtwork ? "Refreshing image..." : "Refresh image"}
                 </button>
               </div>
             </div>
           </div>
         ) : (
-          <div className="track-edit-panel">
-            <div className="album-edit-actions">
+          <div className="mt-4 grid gap-4">
+            <div className="flex flex-wrap items-center gap-3">
               <a
-                className="secondary-link"
+                className={secondaryButtonClass}
                 href={buildMusicBrainzAlbumUrl({
                   artist: album.sourceArtist,
                   album: album.sourceAlbum,
@@ -1419,25 +1482,31 @@ function AlbumEditModal({
               >
                 Open album on MusicBrainz
               </a>
-              <button type="button" onClick={onRefreshTrackData} disabled={isRefreshingTracks}>
+              <button className={secondaryButtonClass} type="button" onClick={onRefreshTrackData} disabled={isRefreshingTracks}>
                 {isRefreshingTracks ? "Refreshing track data..." : "Refresh track data"}
               </button>
             </div>
             {isLoadingTracks ? (
-              <div className="empty-state album-track-loading">
+              <div className={classNames(emptyStateClass, "min-h-[180px]")}>
                 <p>Loading track information...</p>
               </div>
             ) : (
-              <div className="track-edit-list">
+              <div className="grid gap-3">
                 {trackDrafts.map((track) => (
-                  <div key={track.trackKey} className="track-edit-row">
-                    <div className="track-edit-copy">
+                  <div
+                    key={track.trackKey}
+                    className="grid items-end gap-3 rounded-2xl border border-border/12 bg-foreground/[0.03] p-3.5 [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)] lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end"
+                  >
+                    <div className="grid gap-1">
                       <strong>{track.name}</strong>
-                      <span>{track.plays === 1 ? "1 play" : `${track.plays} plays`}</span>
+                      <span className="text-[0.82rem] text-muted">
+                        {track.plays === 1 ? "1 play" : `${track.plays} plays`}
+                      </span>
                     </div>
-                    <label className="track-duration-field">
+                    <label className="grid gap-1.5">
                       <span>Duration</span>
                       <input
+                        className={classNames(fieldClass, "w-28")}
                         type="text"
                         inputMode="numeric"
                         aria-label={`Duration for ${track.name}`}
@@ -1447,7 +1516,7 @@ function AlbumEditModal({
                       />
                     </label>
                     <a
-                      className="secondary-link"
+                      className={secondaryButtonClass}
                       href={buildMusicBrainzTrackUrl(track)}
                       target="_blank"
                       rel="noreferrer"
@@ -1460,11 +1529,11 @@ function AlbumEditModal({
             )}
           </div>
         )}
-        <div className="modal-actions">
-          <button type="button" onClick={onClose}>
+        <div className="mt-4 flex justify-end gap-4">
+          <button className={secondaryButtonClass} type="button" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" onClick={onSave}>
+          <button className={primaryButtonClass} type="button" onClick={onSave}>
             Save changes
           </button>
         </div>
@@ -1488,7 +1557,7 @@ function MissingDataPanel({
 }: MissingDataPanelProps) {
   if (items.length === 0) {
     return (
-      <div className="empty-state missing-data-empty">
+      <div className={emptyStateClass}>
         <p>No missing data remains.</p>
       </div>
     );
@@ -1497,14 +1566,15 @@ function MissingDataPanel({
   const hasMissingDurations = items.some((item) => item.hasMissingDurations);
 
   return (
-    <div className="missing-data-panel">
-      <p className="results-copy">
+    <div className="mt-5 grid gap-4">
+      <p className="max-w-[64ch] text-muted">
         These albums still have missing artwork or track durations. Open an album to fix the image,
         titles, and track data in one place.
       </p>
       {hasMissingDurations ? (
-        <div className="missing-data-actions">
+        <div className="flex justify-start">
           <button
+            className={secondaryButtonClass}
             type="button"
             onClick={onRefreshMissingDurations}
             disabled={isRefreshingDurations}
@@ -1515,7 +1585,7 @@ function MissingDataPanel({
           </button>
         </div>
       ) : null}
-      <div className="missing-data-list">
+      <div className="grid gap-3.5">
         {items.map((item) => {
           const hasVisibleArtwork = Boolean(item.album.imageUrl) && !item.hasMissingArtwork;
 
@@ -1523,26 +1593,39 @@ function MissingDataPanel({
             <button
               key={item.album.sourceKey}
               type="button"
-              className="missing-data-item"
+              className="grid gap-3.5 rounded-2xl border border-border/12 bg-foreground/[0.03] p-4 text-left [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)] sm:grid-cols-[88px_minmax(0,1fr)]"
               onClick={() => onOpenAlbum(item.album)}
               aria-label={`Edit ${item.album.album} by ${item.album.artist}`}
             >
-              <div className={`missing-data-artwork ${hasVisibleArtwork ? "" : "is-placeholder"}`.trim()}>
+              <div
+                className={classNames(
+                  "aspect-square overflow-hidden rounded-[14px] border border-border/12 bg-foreground/[0.03]",
+                  !hasVisibleArtwork && "grid place-items-center p-2",
+                )}
+              >
                 {hasVisibleArtwork ? (
-                  <img src={item.album.imageUrl} alt="" />
+                  <img className="block h-full w-full object-cover" src={item.album.imageUrl} alt="" />
                 ) : (
-                  <div className="placeholder-copy">
+                  <div className="text-center">
                     <strong>{item.album.album}</strong>
-                    <span>{item.album.artist}</span>
+                    <span className="block text-[0.82rem] text-muted">{item.album.artist}</span>
                   </div>
                 )}
               </div>
-              <div className="missing-data-copy">
+              <div className="grid gap-1.5">
                 <strong>{item.album.album}</strong>
-                <span>{item.album.artist}</span>
-                <div className="missing-data-flags">
-                  {item.hasMissingArtwork ? <span>Missing artwork</span> : null}
-                  {item.hasMissingDurations ? <span>Missing track durations</span> : null}
+                <span className="text-muted">{item.album.artist}</span>
+                <div className="flex flex-wrap gap-2">
+                  {item.hasMissingArtwork ? (
+                    <span className="inline-flex items-center rounded-full bg-foreground/8 px-2 py-1 text-[0.78rem] text-foreground">
+                      Missing artwork
+                    </span>
+                  ) : null}
+                  {item.hasMissingDurations ? (
+                    <span className="inline-flex items-center rounded-full bg-foreground/8 px-2 py-1 text-[0.78rem] text-foreground">
+                      Missing track durations
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </button>
@@ -1559,22 +1642,26 @@ function SummaryPanel({ summary }: SummaryPanelProps) {
   }
 
   return (
-    <dl className="summary-list">
-      <div>
-        <dt>Scrobbles</dt>
-        <dd>{summary.scrobbles.toLocaleString()}</dd>
+    <dl className="mt-4 grid grid-cols-2 gap-3.5">
+      <div className="rounded-[14px] border border-border/12 bg-foreground/[0.03] p-3.5">
+        <dt className="text-[0.85rem] text-muted">Scrobbles</dt>
+        <dd className="mt-1 text-[1.1rem] font-bold text-foreground">
+          {summary.scrobbles.toLocaleString()}
+        </dd>
       </div>
-      <div>
-        <dt>Albums found</dt>
-        <dd>{summary.albums.toLocaleString()}</dd>
+      <div className="rounded-[14px] border border-border/12 bg-foreground/[0.03] p-3.5">
+        <dt className="text-[0.85rem] text-muted">Albums found</dt>
+        <dd className="mt-1 text-[1.1rem] font-bold text-foreground">{summary.albums.toLocaleString()}</dd>
       </div>
-      <div>
-        <dt>Pages fetched</dt>
-        <dd>{summary.pages.toLocaleString()}</dd>
+      <div className="rounded-[14px] border border-border/12 bg-foreground/[0.03] p-3.5">
+        <dt className="text-[0.85rem] text-muted">Pages fetched</dt>
+        <dd className="mt-1 text-[1.1rem] font-bold text-foreground">{summary.pages.toLocaleString()}</dd>
       </div>
-      <div>
-        <dt>Duration gaps</dt>
-        <dd>{summary.durationGaps.toLocaleString()}</dd>
+      <div className="rounded-[14px] border border-border/12 bg-foreground/[0.03] p-3.5">
+        <dt className="text-[0.85rem] text-muted">Duration gaps</dt>
+        <dd className="mt-1 text-[1.1rem] font-bold text-foreground">
+          {summary.durationGaps.toLocaleString()}
+        </dd>
       </div>
     </dl>
   );
@@ -1601,8 +1688,11 @@ function PreviewGrid({
 
   if (albums.length === 0) {
     return (
-      <div className="preview-grid" style={style}>
-        <div className="empty-state">
+      <div
+        className="mt-5 grid gap-3 [grid-template-columns:repeat(var(--columns),minmax(0,1fr))] max-sm:grid-cols-2"
+        style={style}
+      >
+        <div className={emptyStateClass}>
           <p>No collage generated yet.</p>
         </div>
       </div>
@@ -1611,7 +1701,7 @@ function PreviewGrid({
 
   return (
     <div
-      className="preview-grid"
+      className="mt-5 grid gap-3 [grid-template-columns:repeat(var(--columns),minmax(0,1fr))] max-sm:grid-cols-2"
       style={style}
       aria-live="polite"
       aria-label="Generated collage preview"
@@ -1632,23 +1722,38 @@ function PreviewGrid({
           <button
             type="button"
             key={`${album.artist}-${album.album}-${index}`}
-            className={`album-tile album-tile-button ${album.imageUrl ? "" : "is-placeholder"} ${warningClassName}`.trim()}
+            className={classNames(
+              "group relative aspect-square overflow-hidden rounded-2xl border border-border/20 bg-surface-muted p-0 text-left",
+              !album.imageUrl &&
+                "grid place-items-center bg-surface-muted p-4 [background:linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02)),rgb(var(--theme-surface-muted))]",
+              warningClassName === "has-warning" &&
+                "border-amber-300 shadow-[inset_0_0_0_1px_rgba(255,194,92,0.45)]",
+              warningClassName === "has-critical-warning" &&
+                "border-orange-400 shadow-[inset_0_0_0_1px_rgba(255,138,101,0.45)]",
+            )}
             onClick={() => onEdit(album)}
             aria-label={`Edit ${album.album} by ${album.artist}`}
           >
-            {hasWarning ? <span className="tile-warning-icon" aria-hidden="true">!</span> : null}
+            {hasWarning ? (
+              <span
+                className="tile-warning-icon absolute left-2.5 top-2.5 z-10 inline-grid h-[1.35rem] w-[1.35rem] place-items-center rounded-full border border-amber-300/60 bg-surface/95 text-[0.78rem] font-extrabold leading-none text-amber-300 shadow-[0_6px_18px_rgb(var(--theme-shadow-color)/0.22)]"
+                aria-hidden="true"
+              >
+                !
+              </span>
+            ) : null}
             {album.imageUrl ? (
-              <img src={album.imageUrl} alt={`${album.album} by ${album.artist}`} />
+              <img className="block h-full w-full object-cover" src={album.imageUrl} alt={`${album.album} by ${album.artist}`} />
             ) : (
-              <div className="placeholder-copy">
+              <div className="text-center">
                 <strong>{album.album}</strong>
-                <span>{album.artist}</span>
+                <span className="block text-[0.82rem] text-muted">{album.artist}</span>
               </div>
             )}
-            <div className="tile-meta">
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-background/95 via-background/80 to-transparent p-3">
               <strong>{album.album}</strong>
-              <span>{album.artist}</span>
-              <div className="tile-metric">{formatMetric(album, rankingMode)}</div>
+              <span className="block text-[0.82rem] text-muted">{album.artist}</span>
+              <div className="mt-1.5 text-[0.78rem] text-muted">{formatMetric(album, rankingMode)}</div>
             </div>
           </button>
         );
@@ -1666,7 +1771,7 @@ interface ExportPreviewProps {
 function ExportPreview({ exportPreviewUrl, hasAlbums, username }: ExportPreviewProps) {
   if (!hasAlbums) {
     return (
-      <div className="empty-state export-preview-empty">
+      <div className={classNames(emptyStateClass, "mt-5")}>
         <p>No collage generated yet.</p>
       </div>
     );
@@ -1674,16 +1779,16 @@ function ExportPreview({ exportPreviewUrl, hasAlbums, username }: ExportPreviewP
 
   if (!exportPreviewUrl) {
     return (
-      <div className="empty-state export-preview-empty">
+      <div className={classNames(emptyStateClass, "mt-5")}>
         <p>The exact PNG preview is not available yet.</p>
       </div>
     );
   }
 
   return (
-    <div className="export-preview-shell">
+    <div className="mt-5 grid place-items-center rounded-[18px] border border-border/12 bg-foreground/[0.03] p-4 [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)]">
       <img
-        className="export-preview-image"
+        className="block h-auto w-full max-w-[880px] rounded-2xl shadow-surface"
         src={exportPreviewUrl}
         alt={
           username
