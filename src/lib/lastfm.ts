@@ -33,6 +33,7 @@ const ALBUM_OVERRIDE_CACHE_KEY = "lastfm-collage-album-override-cache";
 const DURATION_CACHE_KEY = "lastfm-collage-duration-cache";
 const ARTWORK_CACHE_KEY = "lastfm-collage-artwork-cache";
 const RECENT_TRACKS_CHECKPOINT_KEY = "lastfm-collage-recent-tracks-checkpoint";
+const RECENT_TRACKS_CACHE_KEY = "lastfm-collage-recent-tracks-cache";
 const LASTFM_MIN_REQUEST_INTERVAL_MS = 1000;
 const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
 const MISSING_DURATION_RETRY_AFTER_MS = 60 * 60 * 1000;
@@ -42,6 +43,14 @@ const DAYS_BY_RANGE: Record<Exclude<TimeRangeValue, "overall">, number> = {
   "3m": 90,
   "6m": 180,
   "12m": 365,
+};
+const RECENT_TRACKS_CACHE_MAX_AGE_MS: Record<TimeRangeValue, number> = {
+  "7d": 12 * 60 * 60 * 1000,
+  "1m": 12 * 60 * 60 * 1000,
+  "3m": 12 * 60 * 60 * 1000,
+  "6m": 12 * 60 * 60 * 1000,
+  "12m": 12 * 60 * 60 * 1000,
+  overall: 12 * 60 * 60 * 1000,
 };
 
 const durationCache = loadDurationCache();
@@ -77,6 +86,11 @@ interface RecentTracksCheckpoint {
   totalPages: number;
   startedAt: number;
   items: LastFmRecentTrack[];
+}
+
+interface RecentTracksCacheEntry extends RecentTracksResult {
+  queryKey: string;
+  cachedAt: number;
 }
 
 interface MusicBrainzRecording {
@@ -140,6 +154,16 @@ export async function fetchRecentTracks(
   onProgress?: (progress: FetchProgressState) => void,
 ): Promise<RecentTracksResult> {
   const queryKey = buildRecentTracksQueryKey(username, timeRange);
+  const cachedResult = loadRecentTracksCacheEntry(queryKey);
+  if (cachedResult && isRecentTracksCacheFresh(cachedResult, timeRange)) {
+    onStatus?.("Using cached listening history from Last.fm.");
+    publishProgress(cachedResult.pagesFetched, cachedResult.pagesFetched, cachedResult.cachedAt, onProgress);
+    return {
+      items: cachedResult.items,
+      pagesFetched: cachedResult.pagesFetched,
+    };
+  }
+
   const storedCheckpoint = loadRecentTracksCheckpoint(queryKey);
   const checkpoint =
     storedCheckpoint &&
@@ -196,6 +220,12 @@ export async function fetchRecentTracks(
   } while (page <= totalPages);
 
   clearRecentTracksCheckpoint(queryKey);
+  persistRecentTracksCacheEntry({
+    queryKey,
+    cachedAt: Date.now(),
+    items: allTracks,
+    pagesFetched: totalPages,
+  });
 
   return {
     items: allTracks,
@@ -1150,6 +1180,30 @@ function buildRecentTracksQueryKey(username: string, timeRange: TimeRange): stri
   return `${normalizeForKey(username)}::${timeRange.label}`;
 }
 
+function loadRecentTracksCache(): Record<string, RecentTracksCacheEntry> {
+  try {
+    const raw = window.localStorage.getItem(RECENT_TRACKS_CACHE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([queryKey, value]) => {
+        const entry = normalizeRecentTracksCacheEntry(queryKey, value);
+        return entry ? [[queryKey, entry]] : [];
+      }),
+    );
+  } catch (error) {
+    console.warn("Could not load recent tracks cache", error);
+    return {};
+  }
+}
+
 function loadDurationCache(): Record<string, DurationCacheEntry> {
   try {
     const raw = window.localStorage.getItem(DURATION_CACHE_KEY);
@@ -1270,6 +1324,10 @@ function syncAlbumOverrideCacheFromStorage(): void {
   Object.assign(albumOverrideCache, latestCache);
 }
 
+function loadRecentTracksCacheEntry(queryKey: string): RecentTracksCacheEntry | null {
+  return loadRecentTracksCache()[queryKey] ?? null;
+}
+
 function loadRecentTracksCheckpoint(queryKey: string): RecentTracksCheckpoint | null {
   try {
     const raw = window.localStorage.getItem(RECENT_TRACKS_CHECKPOINT_KEY);
@@ -1310,6 +1368,12 @@ function persistRecentTracksCheckpoint(checkpoint: RecentTracksCheckpoint): void
   window.localStorage.setItem(RECENT_TRACKS_CHECKPOINT_KEY, JSON.stringify(checkpoint));
 }
 
+function persistRecentTracksCacheEntry(entry: RecentTracksCacheEntry): void {
+  const cache = loadRecentTracksCache();
+  cache[entry.queryKey] = entry;
+  window.localStorage.setItem(RECENT_TRACKS_CACHE_KEY, JSON.stringify(cache));
+}
+
 function clearRecentTracksCheckpoint(queryKey: string): void {
   const checkpoint = loadRecentTracksCheckpoint(queryKey);
   if (!checkpoint) {
@@ -1317,6 +1381,11 @@ function clearRecentTracksCheckpoint(queryKey: string): void {
   }
 
   window.localStorage.removeItem(RECENT_TRACKS_CHECKPOINT_KEY);
+}
+
+function isRecentTracksCacheFresh(entry: RecentTracksCacheEntry, timeRange: TimeRange): boolean {
+  const maxAge = RECENT_TRACKS_CACHE_MAX_AGE_MS[timeRange.label];
+  return Date.now() - entry.cachedAt <= maxAge;
 }
 
 function publishProgress(
@@ -1425,6 +1494,32 @@ function normalizeAlbumOverrideCacheEntry(value: unknown): AlbumOverrideCacheEnt
     artist: entry.artist.trim(),
     imageUrl: entry.imageUrl.trim(),
     checkedAt: Number.isFinite(entry.checkedAt) ? entry.checkedAt : 0,
+  };
+}
+
+function normalizeRecentTracksCacheEntry(
+  queryKey: string,
+  value: unknown,
+): RecentTracksCacheEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entry = value as Partial<RecentTracksCacheEntry>;
+  if (
+    entry.queryKey !== queryKey ||
+    !Array.isArray(entry.items) ||
+    typeof entry.pagesFetched !== "number" ||
+    typeof entry.cachedAt !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    queryKey: entry.queryKey,
+    items: entry.items,
+    pagesFetched: entry.pagesFetched,
+    cachedAt: entry.cachedAt,
   };
 }
 

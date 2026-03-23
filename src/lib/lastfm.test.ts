@@ -715,6 +715,42 @@ describe("lastfm helpers", () => {
     fetchSpy.mockRestore();
   });
 
+  it("reuses cached recent tracks without refetching while the cache is fresh", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const timeRange = buildTimeRange("7d");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [{ "#text": "https://example.com/a.jpg" }],
+                date: { uts: "123" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const first = await fetchRecentTracks("tommy", timeRange, "test-key");
+    expect(first.items).toHaveLength(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    nowSpy.mockReturnValue(1_000_000 + 5 * 60 * 1000);
+
+    const second = await fetchRecentTracks("tommy", timeRange, "test-key");
+    expect(second.items).toHaveLength(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    fetchSpy.mockRestore();
+  });
+
   it("sorts by approximate listening time when requested", () => {
     const albums: AlbumEntry[] = [
       {

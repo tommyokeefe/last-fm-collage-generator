@@ -232,7 +232,7 @@ describe("App", () => {
       "src",
       "https://example.com/refreshed.jpg",
     );
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("loads and saves track durations from the album information modal", async () => {
@@ -623,7 +623,7 @@ describe("App", () => {
       ).toBeInTheDocument();
     });
 
-    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
 
     fireEvent.click(screen.getByLabelText("Most plays per album"));
 
@@ -665,7 +665,7 @@ describe("App", () => {
       );
     });
 
-    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
   it("shows fetch progress and an ETA while loading multiple pages", async () => {
