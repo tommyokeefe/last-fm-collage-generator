@@ -1639,7 +1639,7 @@ function AlbumEditModal({
         </div>
         {activeTab === "details" ? (
           <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]">
-            <div className="overflow-hidden rounded-2xl border border-border/12 bg-foreground/[0.03]">
+            <div className="self-start overflow-hidden rounded-2xl border border-border/12 bg-foreground/[0.03]">
               {draft.imageUrl ? (
                 <img className="block aspect-square w-full object-cover" src={draft.imageUrl} alt={`${draft.album} by ${draft.artist}`} />
               ) : (
