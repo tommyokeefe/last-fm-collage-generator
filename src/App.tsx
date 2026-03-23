@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   THEME_CHANGE_EVENT,
   getStoredThemePreference,
@@ -227,11 +227,13 @@ function App() {
   const [missingDurations, setMissingDurations] = useState<MissingDurationEntry[]>([]);
   const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
   const [exportPreviewUrl, setExportPreviewUrl] = useState<string | null>(null);
+  const [isGeneratingExportPreview, setIsGeneratingExportPreview] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("config");
   const [viewRefreshKey, setViewRefreshKey] = useState(0);
   const [resultsCopy, setResultsCopy] = useState(
     "Your collage will appear here after generation.",
   );
+  const exportPreviewRequestIdRef = useRef(0);
 
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -333,11 +335,19 @@ function App() {
     let cancelled = false;
 
     async function syncExactPreview() {
+      const requestId = exportPreviewRequestIdRef.current + 1;
+      exportPreviewRequestIdRef.current = requestId;
+
       if (renderedAlbums.length === 0) {
-        setNextExportPreview(null);
+        if (requestId === exportPreviewRequestIdRef.current) {
+          setIsGeneratingExportPreview(false);
+          setNextExportPreview(null);
+        }
         return;
       }
 
+      setIsGeneratingExportPreview(true);
+      setNextExportPreview(null);
       const previewBlob = await tryRenderExportPreview(
         renderedAlbums,
         rows,
@@ -346,8 +356,9 @@ function App() {
         exportRenderOptions,
       );
 
-      if (!cancelled) {
+      if (!cancelled && requestId === exportPreviewRequestIdRef.current) {
         setNextExportPreview(previewBlob);
+        setIsGeneratingExportPreview(false);
       }
     }
 
@@ -1409,6 +1420,7 @@ function App() {
             <ExportPreview
               exportPreviewUrl={exportPreviewUrl}
               hasAlbums={renderedAlbums.length > 0}
+              isGenerating={isGeneratingExportPreview}
               username={settings.username.trim()}
             />
           )}
@@ -1993,14 +2005,27 @@ function PreviewGrid({
 interface ExportPreviewProps {
   exportPreviewUrl: string | null;
   hasAlbums: boolean;
+  isGenerating: boolean;
   username: string;
 }
 
-function ExportPreview({ exportPreviewUrl, hasAlbums, username }: ExportPreviewProps) {
+function ExportPreview({ exportPreviewUrl, hasAlbums, isGenerating, username }: ExportPreviewProps) {
   if (!hasAlbums) {
     return (
       <div className={classNames(emptyStateClass, "mt-5")}>
         <p>No collage generated yet.</p>
+      </div>
+    );
+  }
+
+  if (isGenerating) {
+    return (
+      <div className={classNames(emptyStateClass, "mt-5")}>
+        <p>Regenerating the exact PNG preview...</p>
+        <progress
+          className="mt-4 h-3 w-full max-w-[360px] overflow-hidden rounded-full"
+          aria-label="Regenerating exact PNG preview"
+        />
       </div>
     );
   }

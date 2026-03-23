@@ -519,10 +519,12 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "True PNG preview" }));
 
-    expect(screen.getByRole("img", { name: "Exact PNG preview for tommy" })).toHaveAttribute(
-      "src",
-      "blob:preview",
-    );
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "Exact PNG preview for tommy" })).toHaveAttribute(
+        "src",
+        "blob:preview",
+      );
+    });
     expect(vi.mocked(renderExportBlob)).toHaveBeenLastCalledWith(
       expect.any(Array),
       5,
@@ -1196,6 +1198,67 @@ describe("App", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Showing the top 1 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+  });
+
+  it("shows progress while regenerating the true PNG preview after a grid size change", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const nextPreview = createDeferred<Blob>();
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                date: { uts: "123" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "True PNG preview" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "Exact PNG preview for tommy" })).toBeInTheDocument();
+    });
+
+    vi.mocked(renderExportBlob).mockImplementation(() => nextPreview.promise);
+
+    fireEvent.change(screen.getByLabelText("Grid size"), {
+      target: { value: "6x6" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Regenerating the exact PNG preview...")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("img", { name: "Exact PNG preview for tommy" }),
+    ).not.toBeInTheDocument();
+
+    nextPreview.resolve(new Blob(["updated-preview"], { type: "image/png" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "Exact PNG preview for tommy" })).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Regenerating the exact PNG preview...")).not.toBeInTheDocument();
   });
 
   it("shows a unified missing data tab for albums with missing durations", async () => {
