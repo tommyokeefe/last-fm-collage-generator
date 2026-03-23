@@ -399,8 +399,8 @@ describe("App", () => {
     );
     expect(vi.mocked(renderExportBlob)).toHaveBeenLastCalledWith(
       expect.any(Array),
-      4,
-      4,
+      5,
+      5,
       "plays",
       {
         showAlbumInfo: true,
@@ -448,8 +448,8 @@ describe("App", () => {
     await waitFor(() => {
       expect(vi.mocked(renderExportBlob)).toHaveBeenLastCalledWith(
         expect.any(Array),
-        4,
-        4,
+        5,
+        5,
         "plays",
         {
           showAlbumInfo: false,
@@ -589,8 +589,8 @@ describe("App", () => {
     await waitFor(() => {
       expect(vi.mocked(renderExportBlob)).toHaveBeenLastCalledWith(
         expect.any(Array),
-        4,
-        4,
+        5,
+        5,
         "plays",
         {
           showAlbumInfo: true,
@@ -607,8 +607,8 @@ describe("App", () => {
     await waitFor(() => {
       expect(vi.mocked(renderExportBlob)).toHaveBeenLastCalledWith(
         expect.any(Array),
-        4,
-        4,
+        5,
+        5,
         "listening-time",
         {
           showAlbumInfo: true,

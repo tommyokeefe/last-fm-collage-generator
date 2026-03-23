@@ -71,8 +71,8 @@ const THEME_OPTIONS = [
 ] as const;
 const DEFAULT_SETTINGS: Settings = {
   username: "",
-  timeRange: "1m",
-  gridSize: "4x4",
+  timeRange: "7d",
+  gridSize: "5x5",
   rankingMode: "plays",
   showAlbumInfo: true,
   showMetric: true,
