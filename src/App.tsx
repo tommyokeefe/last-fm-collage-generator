@@ -399,6 +399,75 @@ function App() {
     }
   }
 
+  async function handleMissingDurationRefresh() {
+    if (!generatedResult) {
+      return;
+    }
+
+    const albumsWithMissingDurations = missingDataAlbums
+      .filter((item) => item.hasMissingDurations)
+      .map((item) => item.album);
+
+    if (albumsWithMissingDurations.length === 0) {
+      return;
+    }
+
+    setIsRefreshingAlbumTracks(true);
+    setStatus({
+      tone: "info",
+      message: "Refreshing missing track durations from MusicBrainz...",
+      progress: {
+        completed: 0,
+        total: albumsWithMissingDurations.length,
+        estimatedRemainingMs: 0,
+        unitLabel: "Albums",
+      },
+    });
+
+    const startedAt = Date.now();
+    let completedAlbums = 0;
+    let resolvedTracks = 0;
+
+    try {
+      for (const album of albumsWithMissingDurations) {
+        const result = await refreshAlbumTrackDurationsFromMusicBrainz(album);
+        completedAlbums += 1;
+        resolvedTracks += result.resolvedCount;
+        const elapsedMs = Math.max(Date.now() - startedAt, 0);
+        const averageAlbumMs = completedAlbums > 0 ? elapsedMs / completedAlbums : 0;
+
+        setStatus({
+          tone: "info",
+          message: `Refreshing missing track durations from MusicBrainz... ${completedAlbums} of ${albumsWithMissingDurations.length}`,
+          progress: {
+            completed: completedAlbums,
+            total: albumsWithMissingDurations.length,
+            estimatedRemainingMs:
+              Math.max(albumsWithMissingDurations.length - completedAlbums, 0) * averageAlbumMs,
+            unitLabel: "Albums",
+          },
+        });
+      }
+
+      syncGeneratedResultAfterDurationChange();
+      setStatus({
+        tone: resolvedTracks > 0 ? "success" : "info",
+        message:
+          resolvedTracks > 0
+            ? `Recovered ${resolvedTracks} track duration${resolvedTracks === 1 ? "" : "s"} from MusicBrainz.`
+            : "MusicBrainz did not find additional missing track durations.",
+      });
+    } catch (error) {
+      console.error(error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "MusicBrainz duration refresh failed.",
+      });
+    } finally {
+      setIsRefreshingAlbumTracks(false);
+    }
+  }
+
   function handleRankingModeChange(nextRankingMode: RankingMode) {
     if (nextRankingMode === settings.rankingMode) {
       return;
@@ -1020,7 +1089,9 @@ function App() {
           ) : previewMode === "missing-data" ? (
             <MissingDataPanel
               items={missingDataAlbums}
+              isRefreshingDurations={isRefreshingAlbumTracks}
               onOpenAlbum={handleAlbumEditOpen}
+              onRefreshMissingDurations={() => void handleMissingDurationRefresh()}
             />
           ) : (
             <ExportPreview
@@ -1358,10 +1429,17 @@ function AlbumEditModal({
 
 interface MissingDataPanelProps {
   items: MissingDataAlbumEntry[];
+  isRefreshingDurations: boolean;
   onOpenAlbum: (album: AlbumEntry) => void;
+  onRefreshMissingDurations: () => void;
 }
 
-function MissingDataPanel({ items, onOpenAlbum }: MissingDataPanelProps) {
+function MissingDataPanel({
+  items,
+  isRefreshingDurations,
+  onOpenAlbum,
+  onRefreshMissingDurations,
+}: MissingDataPanelProps) {
   if (items.length === 0) {
     return (
       <div className="empty-state missing-data-empty">
@@ -1370,12 +1448,27 @@ function MissingDataPanel({ items, onOpenAlbum }: MissingDataPanelProps) {
     );
   }
 
+  const hasMissingDurations = items.some((item) => item.hasMissingDurations);
+
   return (
     <div className="missing-data-panel">
       <p className="results-copy">
         These albums still have missing artwork or track durations. Open an album to fix the image,
         titles, and track data in one place.
       </p>
+      {hasMissingDurations ? (
+        <div className="missing-data-actions">
+          <button
+            type="button"
+            onClick={onRefreshMissingDurations}
+            disabled={isRefreshingDurations}
+          >
+            {isRefreshingDurations
+              ? "Fetching missing durations..."
+              : "Try fetching missing durations from MusicBrainz"}
+          </button>
+        </div>
+      ) : null}
       <div className="missing-data-list">
         {items.map((item) => {
           const hasVisibleArtwork = Boolean(item.album.imageUrl) && !item.hasMissingArtwork;

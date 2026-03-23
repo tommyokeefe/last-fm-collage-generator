@@ -1060,6 +1060,79 @@ describe("App", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("tries to fetch missing durations from MusicBrainz in the missing data view", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "123" },
+                },
+              ],
+              "@attr": { totalPages: "1" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recordings: [
+              {
+                title: "Track 1",
+                length: 181000,
+                score: "100",
+                releases: [{ title: "Album A" }],
+                "artist-credit": [{ name: "Artist One" }],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Missing data (1)" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Missing data (1)" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Try fetching missing durations from MusicBrainz" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Recovered 1 track duration from MusicBrainz.")).toBeInTheDocument();
+    });
+
+    expect(
+      JSON.parse(window.localStorage.getItem("lastfm-collage-duration-cache") ?? "{}"),
+    ).toMatchObject({
+      "artist one::track 1": {
+        duration: 181000,
+      },
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
   it("shows a unified missing data tab for albums with missing artwork", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
