@@ -273,9 +273,33 @@ function App() {
     }),
     [settings.rankingMode, settings.timeRange, trimmedUsername],
   );
+  const hasAttemptedListeningTimeForCurrentRange = useMemo(
+    () =>
+      Object.values(generatedResultCache).some(
+        (result) =>
+          result.query.username === trimmedUsername &&
+          result.query.timeRange === settings.timeRange &&
+          result.query.rankingMode === "listening-time",
+      ),
+    [generatedResultCache, settings.timeRange, trimmedUsername],
+  );
+  const visibleMissingDurations = useMemo(
+    () => (hasAttemptedListeningTimeForCurrentRange ? missingDurations : []),
+    [hasAttemptedListeningTimeForCurrentRange, missingDurations],
+  );
   const missingDataAlbums = useMemo(
-    () => buildMissingDataAlbums(generatedResult?.albums ?? [], missingArtwork, missingDurations),
-    [generatedResult?.albums, missingArtwork, missingDurations],
+    () => buildMissingDataAlbums(generatedResult?.albums ?? [], missingArtwork, visibleMissingDurations),
+    [generatedResult?.albums, missingArtwork, visibleMissingDurations],
+  );
+  const visibleSummary = useMemo(
+    () =>
+      summary
+        ? {
+            ...summary,
+            durationGaps: visibleMissingDurations.length,
+          }
+        : null,
+    [summary, visibleMissingDurations.length],
   );
 
   useEffect(() => {
@@ -1189,7 +1213,10 @@ function App() {
           </form>
 
           {!isProgressOverlayVisible ? <StatusBanner status={status} /> : null}
-          <SummaryPanel summary={summary} />
+          <SummaryPanel
+            summary={visibleSummary}
+            showDurationGaps={hasAttemptedListeningTimeForCurrentRange}
+          />
         </section>
 
         <section className={sectionPanelClass}>
@@ -1400,6 +1427,7 @@ function ProgressOverlay({ status }: ProgressOverlayProps) {
 
 interface SummaryPanelProps {
   summary: SummaryState | null;
+  showDurationGaps: boolean;
 }
 
 interface AlbumEditModalProps {
@@ -1709,7 +1737,7 @@ function MissingDataPanel({
   );
 }
 
-function SummaryPanel({ summary }: SummaryPanelProps) {
+function SummaryPanel({ summary, showDurationGaps }: SummaryPanelProps) {
   if (!summary) {
     return null;
   }
@@ -1730,12 +1758,14 @@ function SummaryPanel({ summary }: SummaryPanelProps) {
         <dt className="text-[0.85rem] text-muted">Pages fetched</dt>
         <dd className="mt-1 text-[1.1rem] font-bold text-foreground">{summary.pages.toLocaleString()}</dd>
       </div>
-      <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
-        <dt className="text-[0.85rem] text-muted">Duration gaps</dt>
-        <dd className="mt-1 text-[1.1rem] font-bold text-foreground">
-          {summary.durationGaps.toLocaleString()}
-        </dd>
-      </div>
+      {showDurationGaps ? (
+        <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
+          <dt className="text-[0.85rem] text-muted">Duration gaps</dt>
+          <dd className="mt-1 text-[1.1rem] font-bold text-foreground">
+            {summary.durationGaps.toLocaleString()}
+          </dd>
+        </div>
+      ) : null}
     </dl>
   );
 }

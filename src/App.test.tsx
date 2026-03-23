@@ -304,6 +304,54 @@ describe("App", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("does not show missing duration data before listening-time mode has been generated", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "123" },
+                },
+              ],
+              "@attr": { totalPages: "1" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
+      );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Track information" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Fetched track data for Album A.")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /Missing data \(/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Duration gaps")).not.toBeInTheDocument();
+  });
+
   it("shows the progress overlay above the album modal while track data is loading", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const trackFetchDeferred = createDeferred<Response>();
