@@ -77,19 +77,21 @@ const DEFAULT_SETTINGS: Settings = {
   showAlbumInfo: true,
   showMetric: true,
 };
+const edgeBorderClass = "border-emerald-600/30";
+const softBorderClass = "border-black/10 dark:border-white/8";
 const panelClass =
-  "rounded-panel border border-border/12 bg-surface shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface))]";
+  `rounded-panel border ${edgeBorderClass} bg-surface shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface))]`;
 const sectionPanelClass = `${panelClass} p-6 max-sm:p-4`;
 const fieldClass =
-  "w-full rounded-control border border-border/12 bg-surface-muted px-4 py-[0.85rem] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
+  `w-full rounded-control border ${softBorderClass} bg-surface-muted px-4 py-[0.85rem] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55`;
 const secondaryButtonClass =
-  "inline-flex min-h-12 items-center justify-center rounded-control border border-border/12 bg-surface-muted px-4 py-[0.85rem] text-sm font-medium text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:-translate-y-px hover:border-border/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
+  `inline-flex min-h-12 items-center justify-center rounded-control border ${softBorderClass} bg-surface-muted px-4 py-[0.85rem] text-sm font-medium text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:-translate-y-px hover:border-black/15 dark:hover:border-white/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55`;
 const primaryButtonClass =
   "inline-flex min-h-12 items-center justify-center rounded-control border border-accent bg-accent px-4 py-[0.85rem] text-sm font-semibold text-accent-foreground shadow-[0_12px_24px_rgb(var(--theme-shadow-color)/0.16)] transition hover:-translate-y-px hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
 const toggleGroupClass =
-  "inline-flex flex-wrap gap-2 rounded-[14px] border border-border/12 bg-foreground/[0.03] p-1.5 backdrop-blur-sm";
+  "inline-flex flex-wrap gap-2 rounded-[14px] border border-black/10 bg-foreground/[0.03] p-1.5 backdrop-blur-sm dark:border-emerald-600/30";
 const toggleButtonClass =
-  "min-w-0 rounded-control border border-transparent bg-transparent px-4 py-2.5 text-sm font-medium text-muted transition hover:-translate-y-px hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+  "min-w-0 rounded-control border border-black/10 bg-transparent px-4 py-2.5 text-sm font-medium text-muted transition hover:-translate-y-px hover:border-black/15 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-emerald-600/30 dark:hover:border-emerald-600/30";
 const emptyStateClass =
   "grid min-h-[260px] place-items-center rounded-[18px] border border-dashed border-border/12 bg-foreground/[0.03] text-muted [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)]";
 
@@ -1042,7 +1044,7 @@ function App() {
               </select>
             </label>
 
-            <fieldset className="grid gap-2 rounded-2xl border border-border/12 p-4">
+            <fieldset className={`grid gap-2 rounded-2xl border p-4 ${softBorderClass}`}>
               <legend className="px-1 font-semibold text-foreground">Album ranking mode</legend>
               <label className="grid grid-cols-[auto_1fr] items-center gap-3">
                 <input
@@ -1068,7 +1070,7 @@ function App() {
               </label>
             </fieldset>
 
-            <fieldset className="grid gap-2 rounded-2xl border border-border/12 p-4">
+            <fieldset className={`grid gap-2 rounded-2xl border p-4 ${softBorderClass}`}>
               <legend className="px-1 font-semibold text-foreground">True PNG preview and export</legend>
               <label className="grid grid-cols-[auto_1fr] items-center gap-3">
                 <input
@@ -1131,7 +1133,7 @@ function App() {
                 className={classNames(
                   toggleButtonClass,
                   previewMode === "config" &&
-                    "border-border/12 bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                    "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
                 )}
                 onClick={() => setPreviewMode("config")}
                 aria-pressed={previewMode === "config"}
@@ -1143,7 +1145,7 @@ function App() {
                 className={classNames(
                   toggleButtonClass,
                   previewMode === "export" &&
-                    "border-border/12 bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                    "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
                 )}
                 onClick={() => setPreviewMode("export")}
                 aria-pressed={previewMode === "export"}
@@ -1156,7 +1158,7 @@ function App() {
                   className={classNames(
                     toggleButtonClass,
                     previewMode === "missing-data" &&
-                      "border-border/12 bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                      "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
                   )}
                   onClick={() => setPreviewMode("missing-data")}
                   aria-pressed={previewMode === "missing-data"}
@@ -1240,7 +1242,7 @@ interface StatusBannerProps {
 
 function StatusBanner({ status }: StatusBannerProps) {
   const className = classNames(
-    "mt-4 rounded-[14px] border border-border/12 bg-foreground/[0.03] p-4 text-muted",
+    `mt-4 rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-4 text-muted`,
     status.tone === "error" && "border-red-600/35 text-red-700 dark:text-red-200",
     status.tone === "success" && "border-emerald-600/30 text-emerald-700 dark:text-emerald-200",
   );
@@ -1284,7 +1286,7 @@ function FetchProgress({ progress }: FetchProgressProps) {
         </span>
       </div>
       <progress
-        className="h-3 w-full overflow-hidden rounded-full accent-accent"
+        className="h-3 w-full overflow-hidden rounded-full"
         value={progress.completed}
         max={progress.total}
       >
@@ -1300,7 +1302,7 @@ interface ProgressOverlayProps {
 
 function ProgressOverlay({ status }: ProgressOverlayProps) {
   const className = classNames(
-    "rounded-[14px] border border-border/12 bg-foreground/[0.03] p-4 text-muted",
+    `rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-4 text-muted`,
     status.tone === "error" && "border-red-600/35 text-red-700 dark:text-red-200",
     status.tone === "success" && "border-emerald-600/30 text-emerald-700 dark:text-emerald-200",
   );
@@ -1311,7 +1313,7 @@ function ProgressOverlay({ status }: ProgressOverlayProps) {
       role="presentation"
     >
       <div
-        className="w-full max-w-[440px] rounded-panel border border-border/12 bg-surface/95 p-4 shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface)/0.95)] backdrop-blur"
+        className={`w-full max-w-[440px] rounded-panel border ${edgeBorderClass} bg-surface/95 p-4 shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface)/0.95)] backdrop-blur`}
         role="dialog"
         aria-modal="true"
         aria-label="Operation in progress"
@@ -1368,7 +1370,7 @@ function AlbumEditModal({
       role="presentation"
     >
       <div
-        className="max-h-[calc(100vh-2rem)] w-full max-w-[760px] overflow-y-auto rounded-panel border border-border/12 bg-surface p-5 shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface))]"
+        className={`max-h-[calc(100vh-2rem)] w-full max-w-[760px] overflow-y-auto rounded-panel border ${edgeBorderClass} bg-surface p-5 shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface))]`}
         role="dialog"
         aria-modal="true"
         aria-label="Edit album information"
@@ -1643,21 +1645,21 @@ function SummaryPanel({ summary }: SummaryPanelProps) {
 
   return (
     <dl className="mt-4 grid grid-cols-2 gap-3.5">
-      <div className="rounded-[14px] border border-border/12 bg-foreground/[0.03] p-3.5">
+      <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
         <dt className="text-[0.85rem] text-muted">Scrobbles</dt>
         <dd className="mt-1 text-[1.1rem] font-bold text-foreground">
           {summary.scrobbles.toLocaleString()}
         </dd>
       </div>
-      <div className="rounded-[14px] border border-border/12 bg-foreground/[0.03] p-3.5">
+      <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
         <dt className="text-[0.85rem] text-muted">Albums found</dt>
         <dd className="mt-1 text-[1.1rem] font-bold text-foreground">{summary.albums.toLocaleString()}</dd>
       </div>
-      <div className="rounded-[14px] border border-border/12 bg-foreground/[0.03] p-3.5">
+      <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
         <dt className="text-[0.85rem] text-muted">Pages fetched</dt>
         <dd className="mt-1 text-[1.1rem] font-bold text-foreground">{summary.pages.toLocaleString()}</dd>
       </div>
-      <div className="rounded-[14px] border border-border/12 bg-foreground/[0.03] p-3.5">
+      <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
         <dt className="text-[0.85rem] text-muted">Duration gaps</dt>
         <dd className="mt-1 text-[1.1rem] font-bold text-foreground">
           {summary.durationGaps.toLocaleString()}
@@ -1736,7 +1738,7 @@ function PreviewGrid({
           >
             {hasWarning ? (
               <span
-                className="tile-warning-icon absolute left-2.5 top-2.5 z-10 inline-grid h-[1.35rem] w-[1.35rem] place-items-center rounded-full border border-amber-300/60 bg-surface/95 text-[0.78rem] font-extrabold leading-none text-amber-300 shadow-[0_6px_18px_rgb(var(--theme-shadow-color)/0.22)]"
+                className="tile-warning-icon absolute left-2.5 top-2.5 z-10 inline-grid h-[1.35rem] w-[1.35rem] place-items-center rounded-full border border-amber-500/75 bg-amber-50/95 text-[0.78rem] font-extrabold leading-none text-amber-800 shadow-[0_6px_18px_rgb(var(--theme-shadow-color)/0.22)] dark:border-amber-300/60 dark:bg-surface/95 dark:text-amber-300"
                 aria-hidden="true"
               >
                 !

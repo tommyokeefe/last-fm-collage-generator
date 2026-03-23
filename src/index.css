@@ -25,4 +25,42 @@
   select {
     font: inherit;
   }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: rgb(59 130 246);
+  }
+
+  progress {
+    color: rgb(59 130 246);
+  }
+
+  progress::-webkit-progress-bar {
+    background-color: rgb(var(--theme-foreground) / 0.08);
+    border-radius: 9999px;
+  }
+
+  progress::-webkit-progress-value {
+    background-color: rgb(59 130 246);
+    border-radius: 9999px;
+  }
+
+  progress::-moz-progress-bar {
+    background-color: rgb(59 130 246);
+    border-radius: 9999px;
+  }
+
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 3rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5.25 7.5 10 12.25 14.75 7.5' stroke='%236b7280' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-position: right 0.85rem center;
+    background-repeat: no-repeat;
+    background-size: 0.95rem 0.95rem;
+  }
+
+  :root.dark select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5.25 7.5 10 12.25 14.75 7.5' stroke='%23d4d4d8' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
 }
