@@ -172,6 +172,7 @@ interface GeneratedResultState {
     rankingMode: RankingMode;
   };
   albums: AlbumEntry[];
+  hiddenAlbumSourceKeys: string[];
 }
 
 interface CachedGeneratedResultState extends GeneratedResultState {
@@ -227,6 +228,7 @@ function App() {
   const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
   const [exportPreviewUrl, setExportPreviewUrl] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("config");
+  const [viewRefreshKey, setViewRefreshKey] = useState(0);
   const [resultsCopy, setResultsCopy] = useState(
     "Your collage will appear here after generation.",
   );
@@ -280,13 +282,21 @@ function App() {
       ),
     [generatedResultCache, settings.timeRange, trimmedUsername],
   );
+  const visibleGeneratedAlbums = useMemo(
+    () =>
+      generatedResult
+        ? getVisibleAlbums(generatedResult.albums, generatedResult.hiddenAlbumSourceKeys)
+        : [],
+    [generatedResult],
+  );
+  const hiddenAlbumCount = generatedResult?.hiddenAlbumSourceKeys.length ?? 0;
   const visibleMissingDurations = useMemo(
     () => (hasAttemptedListeningTimeForCurrentRange ? missingDurations : []),
     [hasAttemptedListeningTimeForCurrentRange, missingDurations],
   );
   const missingDataAlbums = useMemo(
-    () => buildMissingDataAlbums(generatedResult?.albums ?? [], missingArtwork, visibleMissingDurations),
-    [generatedResult?.albums, missingArtwork, visibleMissingDurations],
+    () => buildMissingDataAlbums(visibleGeneratedAlbums, missingArtwork, visibleMissingDurations),
+    [missingArtwork, visibleGeneratedAlbums, visibleMissingDurations],
   );
   const visibleSummary = useMemo(
     () =>
@@ -304,12 +314,14 @@ function App() {
       return;
     }
 
-    const nextRenderedAlbums = generatedResult.albums.slice(0, rows * columns);
+    const nextRenderedAlbums = visibleGeneratedAlbums.slice(0, rows * columns);
     setRenderedAlbums(nextRenderedAlbums);
     setResultsCopy(
-      buildResultsCopy(generatedQuery.username, generatedQuery.rankingMode, nextRenderedAlbums.length),
+      nextRenderedAlbums.length > 0
+        ? buildResultsCopy(generatedQuery.username, generatedQuery.rankingMode, nextRenderedAlbums.length)
+        : "No albums remain in the collage.",
     );
-  }, [columns, generatedQuery, generatedResult, rows]);
+  }, [columns, generatedQuery, generatedResult, rows, viewRefreshKey, visibleGeneratedAlbums]);
 
   useEffect(() => {
     if (previewMode === "missing-data" && missingDataAlbums.length === 0) {
@@ -364,6 +376,15 @@ function App() {
   const isProgressOverlayVisible =
     isBusy || isLoadingAlbumTracks || isRefreshingAlbumTracks || isRefreshingAlbumArtwork;
 
+  function requestViewRefresh() {
+    setViewRefreshKey((current) => current + 1);
+  }
+
+  function handlePreviewModeChange(nextMode: PreviewMode) {
+    setPreviewMode(nextMode);
+    requestViewRefresh();
+  }
+
   function syncGeneratedResultCache(nextState: CachedGeneratedResultState) {
     setGeneratedResultCache((current) => ({
       ...current,
@@ -372,17 +393,21 @@ function App() {
   }
 
   function applyGeneratedResultState(nextState: CachedGeneratedResultState) {
-    const nextRenderedAlbums = nextState.albums.slice(0, rows * columns);
+    const nextVisibleAlbums = getVisibleAlbums(nextState.albums, nextState.hiddenAlbumSourceKeys);
+    const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
     setGeneratedResult({
       query: nextState.query,
       albums: nextState.albums,
+      hiddenAlbumSourceKeys: nextState.hiddenAlbumSourceKeys,
     });
     setMissingArtwork(nextState.missingArtwork);
     setMissingDurations(nextState.missingDurations);
     setSummary(nextState.summary);
     setRenderedAlbums(nextRenderedAlbums);
     setResultsCopy(
-      buildResultsCopy(nextState.query.username, nextState.query.rankingMode, nextRenderedAlbums.length),
+      nextRenderedAlbums.length > 0
+        ? buildResultsCopy(nextState.query.username, nextState.query.rankingMode, nextRenderedAlbums.length)
+        : "No albums remain in the collage.",
     );
   }
 
@@ -430,8 +455,12 @@ function App() {
     const nextAlbums = [...generatedResult.albums];
     applyCachedDurations(nextAlbums);
     const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
-    const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
-    const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
+    const nextVisibleAlbums = getVisibleAlbums(
+      nextSortedAlbums,
+      generatedResult.hiddenAlbumSourceKeys,
+    );
+    const nextMissingDurations = getMissingDurationEntries(nextVisibleAlbums);
+    const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
     const nextGeneratedResult = {
       ...generatedResult,
       albums: nextSortedAlbums,
@@ -439,6 +468,7 @@ function App() {
     const nextSummary = summary
       ? {
           ...summary,
+          albums: nextVisibleAlbums.length,
           durationGaps: nextMissingDurations.length,
         }
       : summary;
@@ -447,11 +477,13 @@ function App() {
     setMissingDurations(nextMissingDurations);
     setRenderedAlbums(nextRenderedAlbums);
     setResultsCopy(
-      buildResultsCopy(
-        generatedResult.query.username,
-        generatedResult.query.rankingMode,
-        nextRenderedAlbums.length,
-      ),
+      nextRenderedAlbums.length > 0
+        ? buildResultsCopy(
+            generatedResult.query.username,
+            generatedResult.query.rankingMode,
+            nextRenderedAlbums.length,
+          )
+        : "No albums remain in the collage.",
     );
     setSummary(nextSummary);
     syncGeneratedResultCache({
@@ -752,10 +784,11 @@ function App() {
           rankingMode: settings.rankingMode,
         },
         albums: sorted,
+        hiddenAlbumSourceKeys: [],
       };
       const nextSummary = {
         scrobbles: recentTracks.items.length,
-        albums: aggregated.length,
+        albums: sorted.length,
         durationGaps: nextMissingDurations.length,
       };
       setGeneratedResult(nextGeneratedResult);
@@ -853,6 +886,93 @@ function App() {
     setIsLoadingAlbumTracks(false);
     setIsRefreshingAlbumTracks(false);
     setIsRefreshingAlbumArtwork(false);
+    requestViewRefresh();
+  }
+
+  function handleAlbumRemove() {
+    if (!generatedResult || !editingAlbum) {
+      return;
+    }
+
+    const hiddenAlbumSourceKeys = Array.from(
+      new Set([...generatedResult.hiddenAlbumSourceKeys, editingAlbum.sourceKey]),
+    );
+    const nextVisibleAlbums = getVisibleAlbums(generatedResult.albums, hiddenAlbumSourceKeys);
+    const nextMissingArtwork = getMissingArtworkEntries(nextVisibleAlbums);
+    const nextMissingDurations = getMissingDurationEntries(nextVisibleAlbums);
+    const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
+    const nextGeneratedResult = {
+      ...generatedResult,
+      hiddenAlbumSourceKeys,
+    };
+    const nextSummary = summary
+      ? {
+          ...summary,
+          albums: nextVisibleAlbums.length,
+          durationGaps: nextMissingDurations.length,
+        }
+      : summary;
+
+    setGeneratedResult(nextGeneratedResult);
+    setMissingArtwork(nextMissingArtwork);
+    setMissingDurations(nextMissingDurations);
+    setRenderedAlbums(nextRenderedAlbums);
+    setResultsCopy(
+      nextRenderedAlbums.length > 0
+        ? buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length)
+        : "No albums remain in the collage.",
+    );
+    setSummary(nextSummary);
+    syncGeneratedResultCache({
+      ...nextGeneratedResult,
+      missingArtwork: nextMissingArtwork,
+      missingDurations: nextMissingDurations,
+      summary: nextSummary,
+    });
+    setStatus({
+      tone: "success",
+      message: `Removed ${editingAlbum.album} from the collage.`,
+    });
+    handleAlbumEditClose();
+  }
+
+  function handleRestoreRemovedAlbums() {
+    if (!generatedResult || generatedResult.hiddenAlbumSourceKeys.length === 0) {
+      return;
+    }
+
+    const nextVisibleAlbums = generatedResult.albums;
+    const nextMissingArtwork = getMissingArtworkEntries(nextVisibleAlbums);
+    const nextMissingDurations = getMissingDurationEntries(nextVisibleAlbums);
+    const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
+    const nextGeneratedResult = {
+      ...generatedResult,
+      hiddenAlbumSourceKeys: [],
+    };
+    const nextSummary = summary
+      ? {
+          ...summary,
+          albums: nextVisibleAlbums.length,
+          durationGaps: nextMissingDurations.length,
+        }
+      : summary;
+
+    setGeneratedResult(nextGeneratedResult);
+    setMissingArtwork(nextMissingArtwork);
+    setMissingDurations(nextMissingDurations);
+    setRenderedAlbums(nextRenderedAlbums);
+    setResultsCopy(buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length));
+    setSummary(nextSummary);
+    syncGeneratedResultCache({
+      ...nextGeneratedResult,
+      missingArtwork: nextMissingArtwork,
+      missingDurations: nextMissingDurations,
+      summary: nextSummary,
+    });
+    setStatus({
+      tone: "success",
+      message: "Restored removed albums to the collage.",
+    });
   }
 
   function validateAlbumEditDraft(): AlbumEditDraft | null {
@@ -908,9 +1028,13 @@ function App() {
           }
         : candidate,
     );
-    const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
-    const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
-    const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
+    const nextVisibleAlbums = getVisibleAlbums(
+      nextSortedAlbums,
+      generatedResult.hiddenAlbumSourceKeys,
+    );
+    const nextMissingArtwork = getMissingArtworkEntries(nextVisibleAlbums);
+    const nextMissingDurations = getMissingDurationEntries(nextVisibleAlbums);
+    const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
 
     const nextGeneratedResult = {
       ...generatedResult,
@@ -919,7 +1043,7 @@ function App() {
     const nextSummary = summary
       ? {
           ...summary,
-          albums: nextSortedAlbums.length,
+          albums: nextVisibleAlbums.length,
           durationGaps: nextMissingDurations.length,
         }
       : summary;
@@ -1210,46 +1334,57 @@ function App() {
         <section className={sectionPanelClass}>
           <div className="flex items-start justify-between gap-4 max-lg:flex-col">
             <div>
-               <h2 className="text-2xl font-semibold text-foreground">Preview</h2>
+                <h2 className="text-2xl font-semibold text-foreground">Preview</h2>
               <p className="max-w-[64ch] text-muted">{resultsCopy}</p>
             </div>
-            <div className={toggleGroupClass} role="tablist" aria-label="Preview modes">
-              <button
-                type="button"
-                className={classNames(
-                  toggleButtonClass,
-                  previewMode === "config" &&
-                    "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
-                )}
-                onClick={() => setPreviewMode("config")}
-                aria-pressed={previewMode === "config"}
-              >
-                Configuration view
-              </button>
-              <button
-                type="button"
-                className={classNames(
-                  toggleButtonClass,
-                  previewMode === "export" &&
-                    "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
-                )}
-                onClick={() => setPreviewMode("export")}
-                aria-pressed={previewMode === "export"}
-              >
-                True PNG preview
-              </button>
-              {missingDataAlbums.length > 0 ? (
+            <div className="flex flex-col items-end gap-3 max-lg:w-full max-lg:items-stretch">
+              <div className={toggleGroupClass} role="tablist" aria-label="Preview modes">
                 <button
                   type="button"
                   className={classNames(
                     toggleButtonClass,
-                    previewMode === "missing-data" &&
+                    previewMode === "config" &&
                       "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
                   )}
-                  onClick={() => setPreviewMode("missing-data")}
-                  aria-pressed={previewMode === "missing-data"}
+                  onClick={() => handlePreviewModeChange("config")}
+                  aria-pressed={previewMode === "config"}
                 >
-                  Missing data ({missingDataAlbums.length})
+                  Configuration view
+                </button>
+                <button
+                  type="button"
+                  className={classNames(
+                    toggleButtonClass,
+                    previewMode === "export" &&
+                      "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                  )}
+                  onClick={() => handlePreviewModeChange("export")}
+                  aria-pressed={previewMode === "export"}
+                >
+                  True PNG preview
+                </button>
+                {missingDataAlbums.length > 0 ? (
+                  <button
+                    type="button"
+                    className={classNames(
+                      toggleButtonClass,
+                      previewMode === "missing-data" &&
+                        "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                    )}
+                    onClick={() => handlePreviewModeChange("missing-data")}
+                    aria-pressed={previewMode === "missing-data"}
+                  >
+                    Missing data ({missingDataAlbums.length})
+                  </button>
+                ) : null}
+              </div>
+              {previewMode === "config" && hiddenAlbumCount > 0 ? (
+                <button
+                  type="button"
+                  className={classNames(secondaryButtonClass, "max-lg:w-full")}
+                  onClick={handleRestoreRemovedAlbums}
+                >
+                  Restore removed albums ({hiddenAlbumCount})
                 </button>
               ) : null}
             </div>
@@ -1311,6 +1446,7 @@ function App() {
             )
           }
           onClose={handleAlbumEditClose}
+          onRemoveAlbum={handleAlbumRemove}
           onRefreshArtwork={() => void handleAlbumArtworkRefresh()}
           onRefreshTrackData={() => void handleAlbumTrackRefresh()}
           onTabChange={(nextTab) => void handleAlbumEditTabChange(nextTab)}
@@ -1431,6 +1567,7 @@ interface AlbumEditModalProps {
   onClose: () => void;
   onRefreshArtwork: () => void;
   onRefreshTrackData: () => void;
+  onRemoveAlbum: () => void;
   onTabChange: (nextTab: AlbumEditTab) => void;
   onSave: () => void;
 }
@@ -1448,6 +1585,7 @@ function AlbumEditModal({
   onClose,
   onRefreshArtwork,
   onRefreshTrackData,
+  onRemoveAlbum,
   onTabChange,
   onSave,
 }: AlbumEditModalProps) {
@@ -1553,6 +1691,9 @@ function AlbumEditModal({
                 </a>
                 <button className={secondaryButtonClass} type="button" onClick={onRefreshArtwork} disabled={isRefreshingArtwork}>
                   {isRefreshingArtwork ? "Refreshing image..." : "Refresh image"}
+                </button>
+                <button className={secondaryButtonClass} type="button" onClick={onRemoveAlbum}>
+                  Remove album from collage
                 </button>
               </div>
             </div>
@@ -1960,6 +2101,15 @@ function matchesGeneratedQuery(
 
 function buildGeneratedResultKey(query: GeneratedResultState["query"]): string {
   return `${query.username}::${query.timeRange}::${query.rankingMode}`;
+}
+
+function getVisibleAlbums(albums: AlbumEntry[], hiddenAlbumSourceKeys: string[]): AlbumEntry[] {
+  if (hiddenAlbumSourceKeys.length === 0) {
+    return albums;
+  }
+
+  const hiddenAlbumSourceKeySet = new Set(hiddenAlbumSourceKeys);
+  return albums.filter((album) => !hiddenAlbumSourceKeySet.has(album.sourceKey));
 }
 
 function formatTrackDurationInput(durationMs: number): string {

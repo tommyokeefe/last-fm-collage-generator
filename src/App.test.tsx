@@ -243,6 +243,76 @@ describe("App", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("removes an album from the collage and restores it from the configuration view", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                date: { uts: "123" },
+              },
+              {
+                artist: { name: "Artist Two" },
+                album: { "#text": "Album B" },
+                name: "Track 2",
+                image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
+                date: { uts: "456" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove album from collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Removed Album A from the collage.")).toBeInTheDocument();
+    });
+
+    expect(
+      screen.queryByRole("dialog", { name: "Edit album information" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit Album A by Artist One" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit Album B by Artist Two" })).toBeInTheDocument();
+    expect(screen.getByText("Showing the top 1 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore removed albums (1)" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore removed albums (1)" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Restored removed albums to the collage.")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("button", { name: "Edit Album A by Artist One" })).toBeInTheDocument();
+    expect(screen.getByText("Showing the top 2 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Restore removed albums (1)" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("loads and saves track durations from the album information modal", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch")
@@ -463,6 +533,65 @@ describe("App", () => {
         showMetric: true,
       },
     );
+  });
+
+  it("recalculates the exact preview when switching views and when closing the album modal", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                date: { uts: "123" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+      expect(vi.mocked(renderExportBlob)).toHaveBeenCalled();
+    });
+
+    vi.mocked(renderExportBlob).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "True PNG preview" }));
+
+    await waitFor(() => {
+      expect(vi.mocked(renderExportBlob).mock.calls.length).toBeGreaterThan(0);
+    });
+    const callCountAfterExportView = vi.mocked(renderExportBlob).mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Configuration view" }));
+
+    await waitFor(() => {
+      expect(vi.mocked(renderExportBlob).mock.calls.length).toBeGreaterThan(callCountAfterExportView);
+    });
+    const callCountAfterConfigView = vi.mocked(renderExportBlob).mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Edit album information" })).not.toBeInTheDocument();
+      expect(vi.mocked(renderExportBlob).mock.calls.length).toBeGreaterThan(callCountAfterConfigView);
+    });
   });
 
   it("updates true PNG render options when export toggles change", async () => {
