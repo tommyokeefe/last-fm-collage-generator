@@ -31,7 +31,6 @@ export interface StatusState {
 export interface SummaryState {
   scrobbles: number;
   albums: number;
-  pages: number;
   durationGaps: number;
 }
 

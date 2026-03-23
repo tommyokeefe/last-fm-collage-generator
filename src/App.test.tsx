@@ -130,6 +130,7 @@ describe("App", () => {
 
   it("refreshes album artwork and saves modal edits to the local cache", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const refreshedArtworkRequest = createDeferred<Response>();
     const recentTracksResponse = new Response(
       JSON.stringify({
         recenttracks: {
@@ -156,16 +157,7 @@ describe("App", () => {
     );
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(recentTracksResponse.clone())
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            album: {
-              image: [{ "#text": "" }, { "#text": "https://example.com/refreshed.jpg" }],
-            },
-          }),
-          { status: 200 },
-        ),
-      );
+      .mockReturnValueOnce(refreshedArtworkRequest.promise);
 
     const { unmount } = render(<App />);
 
@@ -188,6 +180,22 @@ describe("App", () => {
       "https://www.last.fm/music/Artist%20One/Album%20A",
     );
     fireEvent.click(screen.getByRole("button", { name: "Refresh image" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Operation in progress" })).toBeInTheDocument();
+    });
+    expect(screen.getByText("Refreshing artwork for Album A...")).toBeInTheDocument();
+
+    refreshedArtworkRequest.resolve(
+      new Response(
+        JSON.stringify({
+          album: {
+            image: [{ "#text": "" }, { "#text": "https://example.com/refreshed.jpg" }],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
 
     await waitFor(() => {
       expect(screen.getByText("Refreshed artwork for Album A.")).toBeInTheDocument();
@@ -1179,6 +1187,87 @@ describe("App", () => {
       },
     });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("only asks MusicBrainz for tracks whose current duration is still zero", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "123" },
+                },
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 2",
+                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "124" },
+                },
+              ],
+              "@attr": { totalPages: "1" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "240000" } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recordings: [
+              {
+                title: "Track 1",
+                length: 181000,
+                score: "100",
+                releases: [{ title: "Album A" }],
+                "artist-credit": [{ name: "Artist One" }],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Missing data (1)" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Missing data (1)" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Try fetching missing durations from MusicBrainz" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Recovered 1 track duration from MusicBrainz.")).toBeInTheDocument();
+    });
+
+    const lastFetchUrl = fetchSpy.mock.calls.at(-1)?.[0];
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(typeof lastFetchUrl).toBe("string");
+    expect(lastFetchUrl).toContain('recording%3A%22Track+1%22');
+    expect(lastFetchUrl).not.toContain('recording%3A%22Track+2%22');
   });
 
   it("shows a unified missing data tab for albums with missing artwork", async () => {

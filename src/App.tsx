@@ -15,6 +15,7 @@ import {
   buildMusicBrainzAlbumUrl,
   buildMusicBrainzTrackUrl,
   buildTimeRange,
+  fetchMissingDurationsFromMusicBrainz,
   fetchRecentTracks,
   formatMetric,
   getAlbumTrackDurationEntries,
@@ -542,11 +543,7 @@ function App() {
       return;
     }
 
-    const albumsWithMissingDurations = missingDataAlbums
-      .filter((item) => item.hasMissingDurations)
-      .map((item) => item.album);
-
-    if (albumsWithMissingDurations.length === 0) {
+    if (visibleMissingDurations.length === 0) {
       return;
     }
 
@@ -556,43 +553,35 @@ function App() {
       message: "Refreshing missing track durations from MusicBrainz...",
       progress: {
         completed: 0,
-        total: albumsWithMissingDurations.length,
+        total: visibleMissingDurations.length,
         estimatedRemainingMs: 0,
-        unitLabel: "Albums",
+        unitLabel: "Tracks",
       },
     });
 
-    const startedAt = Date.now();
-    let completedAlbums = 0;
-    let resolvedTracks = 0;
-
     try {
-      for (const album of albumsWithMissingDurations) {
-        const result = await refreshAlbumTrackDurationsFromMusicBrainz(album);
-        completedAlbums += 1;
-        resolvedTracks += result.resolvedCount;
-        const elapsedMs = Math.max(Date.now() - startedAt, 0);
-        const averageAlbumMs = completedAlbums > 0 ? elapsedMs / completedAlbums : 0;
-
-        setStatus({
-          tone: "info",
-          message: `Refreshing missing track durations from MusicBrainz... ${completedAlbums} of ${albumsWithMissingDurations.length}`,
-          progress: {
-            completed: completedAlbums,
-            total: albumsWithMissingDurations.length,
-            estimatedRemainingMs:
-              Math.max(albumsWithMissingDurations.length - completedAlbums, 0) * averageAlbumMs,
-            unitLabel: "Albums",
-          },
-        });
-      }
+      const result = await fetchMissingDurationsFromMusicBrainz(
+        visibleMissingDurations,
+        (message) =>
+          setStatus((current) => ({
+            tone: "info",
+            message,
+            progress: current.progress,
+          })),
+        (progress) =>
+          setStatus({
+            tone: "info",
+            message: `Refreshing missing track durations from MusicBrainz... ${progress.completed} of ${progress.total}`,
+            progress,
+          }),
+      );
 
       syncGeneratedResultAfterDurationChange();
       setStatus({
-        tone: resolvedTracks > 0 ? "success" : "info",
+        tone: result.resolvedCount > 0 ? "success" : "info",
         message:
-          resolvedTracks > 0
-            ? `Recovered ${resolvedTracks} track duration${resolvedTracks === 1 ? "" : "s"} from MusicBrainz.`
+          result.resolvedCount > 0
+            ? `Recovered ${result.resolvedCount} track duration${result.resolvedCount === 1 ? "" : "s"} from MusicBrainz.`
             : "MusicBrainz did not find additional missing track durations.",
       });
     } catch (error) {
@@ -767,7 +756,6 @@ function App() {
       const nextSummary = {
         scrobbles: recentTracks.items.length,
         albums: aggregated.length,
-        pages: recentTracks.pagesFetched,
         durationGaps: nextMissingDurations.length,
       };
       setGeneratedResult(nextGeneratedResult);
@@ -989,6 +977,10 @@ function App() {
       return;
     }
 
+    setStatus({
+      tone: "info",
+      message: `Refreshing artwork for ${editingAlbum.album}...`,
+    });
     setIsRefreshingAlbumArtwork(true);
     try {
       const refreshedImageUrl = await refreshAlbumArtwork(editingAlbum, apiKey);
@@ -1749,10 +1741,6 @@ function SummaryPanel({ summary, showDurationGaps }: SummaryPanelProps) {
       <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
         <dt className="text-[0.85rem] text-muted">Albums found</dt>
         <dd className="mt-1 text-[1.1rem] font-bold text-foreground">{summary.albums.toLocaleString()}</dd>
-      </div>
-      <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
-        <dt className="text-[0.85rem] text-muted">Pages fetched</dt>
-        <dd className="mt-1 text-[1.1rem] font-bold text-foreground">{summary.pages.toLocaleString()}</dd>
       </div>
       {showDurationGaps ? (
         <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
