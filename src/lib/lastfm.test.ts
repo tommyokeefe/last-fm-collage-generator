@@ -1,12 +1,18 @@
 import {
   aggregateAlbums,
+  applyCachedArtwork,
   buildTimeRange,
+  buildMusicBrainzAlbumUrl,
+  buildMusicBrainzTrackUrl,
   createRequestScheduler,
+  fetchMissingArtworkFromMusicBrainz,
   fetchMissingDurationsFromMusicBrainz,
   fetchRecentTracks,
+  getMissingArtworkEntries,
   formatMetric,
   getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
+  saveAlbumArtworkOverride,
   sortAlbums,
 } from "./lastfm";
 import type { AlbumEntry, LastFmRecentTrack } from "../types";
@@ -268,6 +274,137 @@ describe("lastfm helpers", () => {
     });
 
     fetchSpy.mockRestore();
+  });
+
+  it("tries MusicBrainz for unresolved missing artwork", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          releases: [
+            {
+              id: "release-123",
+              title: "Album A",
+              score: "100",
+              "cover-art-archive": { front: true },
+              "artist-credit": [{ name: "Artist One" }],
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "" }],
+        date: { uts: "123" },
+      },
+    ]);
+    const missingArtwork = getMissingArtworkEntries(albums);
+
+    const result = await fetchMissingArtworkFromMusicBrainz(missingArtwork);
+
+    applyCachedArtwork(albums);
+
+    expect(result.resolvedCount).toBe(1);
+    expect(result.missingArtwork).toEqual([]);
+    expect(albums[0]?.imageUrl).toBe("https://coverartarchive.org/release/release-123/front");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("musicbrainz.org/ws/2/release"),
+      expect.objectContaining({
+        headers: {
+          Accept: "application/json",
+        },
+      }),
+    );
+    expect(
+      JSON.parse(window.localStorage.getItem("lastfm-collage-artwork-cache") ?? "{}"),
+    ).toMatchObject({
+      "artist one::album a": {
+        imageUrl: "https://coverartarchive.org/release/release-123/front",
+      },
+    });
+
+    fetchSpy.mockRestore();
+  });
+
+  it("treats Last.fm placeholder artwork as missing", () => {
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [
+          {
+            "#text":
+              "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
+          },
+        ],
+        date: { uts: "123" },
+      },
+    ]);
+
+    expect(getMissingArtworkEntries(albums)).toEqual([
+      {
+        artist: "Artist One",
+        album: "Album A",
+        albumKey: "artist one::album a",
+      },
+    ]);
+  });
+
+  it("builds MusicBrainz search URLs for tracks and albums", () => {
+    expect(
+      buildMusicBrainzTrackUrl({
+        artist: "Artist One",
+        album: "Album A",
+        name: "Track 1",
+        plays: 1,
+      }),
+    ).toBe(
+      "https://musicbrainz.org/search?query=Track+1+Artist+One+Album+A&type=recording&method=indexed",
+    );
+    expect(
+      buildMusicBrainzAlbumUrl({
+        artist: "Artist One",
+        album: "Album A",
+      }),
+    ).toBe(
+      "https://musicbrainz.org/search?query=Album+A+Artist+One&type=release&method=indexed",
+    );
+  });
+
+  it("saves local artwork overrides into the artwork cache", () => {
+    saveAlbumArtworkOverride(
+      {
+        artist: "Artist One",
+        album: "Album A",
+        albumKey: "artist one::album a",
+      },
+      "https://example.com/override.jpg",
+    );
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    applyCachedArtwork(albums);
+
+    expect(albums[0]?.imageUrl).toBe("https://example.com/override.jpg");
+    expect(
+      JSON.parse(window.localStorage.getItem("lastfm-collage-artwork-cache") ?? "{}"),
+    ).toMatchObject({
+      "artist one::album a": {
+        imageUrl: "https://example.com/override.jpg",
+      },
+    });
   });
 
   it("resumes recent track fetching from the last successful page", async () => {

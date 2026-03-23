@@ -47,6 +47,12 @@ export interface MissingDurationEntry extends AlbumTrack {
   checkedAt: number;
 }
 
+export interface MissingArtworkEntry {
+  artist: string;
+  album: string;
+  albumKey: string;
+}
+
 export interface AlbumEntry {
   artist: string;
   artistNames: Set<string>;
@@ -140,5 +146,10 @@ export interface HydrateListeningTimesResult {
 
 export interface ResolveMissingDurationsResult {
   missingDurations: MissingDurationEntry[];
+  resolvedCount: number;
+}
+
+export interface ResolveMissingArtworkResult {
+  missingArtwork: MissingArtworkEntry[];
   resolvedCount: number;
 }

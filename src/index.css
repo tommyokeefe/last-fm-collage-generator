@@ -326,20 +326,30 @@ button:disabled {
   margin-top: 1.25rem;
 }
 
+.missing-artwork-panel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.missing-artwork-toolbar,
 .missing-duration-toolbar {
   display: flex;
   justify-content: flex-start;
 }
 
+.missing-artwork-toolbar button,
 .missing-duration-toolbar button {
   width: auto;
 }
 
+.missing-artwork-list,
 .missing-duration-list {
   display: grid;
   gap: 0.85rem;
 }
 
+.missing-artwork-item,
 .missing-duration-item {
   display: grid;
   gap: 1rem;
@@ -354,15 +364,26 @@ button:disabled {
   gap: 0.35rem;
 }
 
+.missing-artwork-copy {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.missing-artwork-item span,
 .missing-duration-copy span {
   color: var(--text-muted);
 }
 
+.missing-artwork-actions,
 .missing-duration-actions {
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(180px, 220px) auto;
+  grid-template-columns: minmax(0, auto) minmax(220px, 1fr) auto;
   gap: 0.75rem;
   align-items: end;
+}
+
+.missing-artwork-actions button {
+  width: auto;
 }
 
 .secondary-link {
@@ -383,7 +404,16 @@ button:disabled {
   gap: 0.35rem;
 }
 
+.image-override-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
 .duration-override-field span {
+  font-size: 0.9rem;
+}
+
+.image-override-field span {
   font-size: 0.9rem;
 }
 
@@ -411,6 +441,17 @@ button:disabled {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.tile-remove-button {
+  position: absolute;
+  inset: 0.6rem 0.6rem auto auto;
+  z-index: 1;
+  width: auto;
+  padding: 0.45rem 0.7rem;
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(9, 17, 31, 0.82);
+  color: var(--text);
 }
 
 .album-tile.is-placeholder {

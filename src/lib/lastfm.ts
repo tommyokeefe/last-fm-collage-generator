@@ -5,6 +5,7 @@ import type {
   HydrateListeningTimesResult,
   LastFmErrorResponse,
   LastFmImage,
+  MissingArtworkEntry,
   MissingDurationEntry,
   LastFmRecentTrack,
   LastFmRecentTracksResponse,
@@ -13,14 +14,21 @@ import type {
   RankingMode,
   RecentTracksResult,
   RecentTracksResumeState,
+  ResolveMissingArtworkResult,
   ResolveMissingDurationsResult,
   TimeRange,
   TimeRangeValue,
 } from "../types";
 
 const LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/";
-const MUSICBRAINZ_API_URL = "https://musicbrainz.org/ws/2/recording";
+const MUSICBRAINZ_RECORDING_API_URL = "https://musicbrainz.org/ws/2/recording";
+const MUSICBRAINZ_RELEASE_API_URL = "https://musicbrainz.org/ws/2/release";
+const LASTFM_PLACEHOLDER_IMAGE_MARKERS = [
+  "2a96cbd8b46e442fc41c2b86b821562f",
+  "/default_album_",
+];
 const DURATION_CACHE_KEY = "lastfm-collage-duration-cache";
+const ARTWORK_CACHE_KEY = "lastfm-collage-artwork-cache";
 const RECENT_TRACKS_CHECKPOINT_KEY = "lastfm-collage-recent-tracks-checkpoint";
 const LASTFM_MIN_REQUEST_INTERVAL_MS = 200;
 const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
@@ -34,6 +42,7 @@ const DAYS_BY_RANGE: Record<Exclude<TimeRangeValue, "overall">, number> = {
 };
 
 const durationCache = loadDurationCache();
+const artworkCache = loadArtworkCache();
 const lastFmRequestScheduler = createRequestScheduler(
   import.meta.env.MODE === "test" ? 0 : LASTFM_MIN_REQUEST_INTERVAL_MS,
 );
@@ -43,6 +52,11 @@ const musicBrainzRequestScheduler = createRequestScheduler(
 
 interface DurationCacheEntry {
   duration: number;
+  checkedAt: number;
+}
+
+interface ArtworkCacheEntry {
+  imageUrl: string;
   checkedAt: number;
 }
 
@@ -71,6 +85,25 @@ interface MusicBrainzRecording {
 
 interface MusicBrainzRecordingSearchResponse {
   recordings?: MusicBrainzRecording[];
+}
+
+interface MusicBrainzRelease {
+  id?: string;
+  title?: string;
+  score?: number | string;
+  "artist-credit"?: Array<{
+    name?: string;
+    artist?: {
+      name?: string;
+    };
+  }>;
+  "cover-art-archive"?: {
+    front?: boolean;
+  };
+}
+
+interface MusicBrainzReleaseSearchResponse {
+  releases?: MusicBrainzRelease[];
 }
 
 export function buildTimeRange(value: TimeRangeValue): TimeRange {
@@ -378,6 +411,66 @@ export async function fetchMissingDurationsFromMusicBrainz(
   };
 }
 
+export async function fetchMissingArtworkFromMusicBrainz(
+  albums: MissingArtworkEntry[],
+  onStatus?: (message: string) => void,
+  onProgress?: (progress: FetchProgressState) => void,
+): Promise<ResolveMissingArtworkResult> {
+  syncArtworkCacheFromStorage();
+  const pendingAlbums = albums.filter((album) => !readCachedArtwork(artworkCache[album.albumKey]));
+  let completedRequests = 0;
+  let resolvedCount = 0;
+  const startedAt = Date.now();
+
+  if (pendingAlbums.length > 0) {
+    onProgress?.({
+      completed: 0,
+      total: pendingAlbums.length,
+      estimatedRemainingMs: 0,
+      unitLabel: "Albums",
+    });
+  } else {
+    onStatus?.("No missing artwork remains.");
+  }
+
+  await mapWithConcurrency(pendingAlbums, 1, async (album) => {
+    try {
+      const imageUrl = await lookupMusicBrainzAlbumArtwork(album);
+      if (imageUrl) {
+        artworkCache[album.albumKey] = {
+          imageUrl,
+          checkedAt: Date.now(),
+        };
+        resolvedCount += 1;
+      }
+    } catch (error) {
+      console.warn("MusicBrainz artwork lookup failed", album, error);
+    } finally {
+      completedRequests += 1;
+      if (pendingAlbums.length > 0) {
+        const elapsedMs = Math.max(Date.now() - startedAt, 0);
+        const averageRequestMs = completedRequests > 0 ? elapsedMs / completedRequests : 0;
+        onProgress?.({
+          completed: completedRequests,
+          total: pendingAlbums.length,
+          estimatedRemainingMs: Math.max(pendingAlbums.length - completedRequests, 0) * averageRequestMs,
+          unitLabel: "Albums",
+        });
+        onStatus?.(
+          `Trying MusicBrainz for missing album artwork... ${completedRequests}/${pendingAlbums.length}`,
+        );
+      }
+    }
+  });
+
+  persistArtworkCache(artworkCache);
+
+  return {
+    resolvedCount,
+    missingArtwork: buildMissingArtworkEntriesFromAlbums(albums),
+  };
+}
+
 export function applyCachedDurations(albums: AlbumEntry[]): void {
   syncDurationCacheFromStorage();
 
@@ -389,6 +482,17 @@ export function applyCachedDurations(albums: AlbumEntry[]): void {
     }
 
     album.approximateListeningMs = total;
+  }
+}
+
+export function applyCachedArtwork(albums: AlbumEntry[]): void {
+  syncArtworkCacheFromStorage();
+
+  for (const album of albums) {
+    const cachedImageUrl = readCachedArtwork(artworkCache[buildAlbumKey(album.artist, album.album)]);
+    if (cachedImageUrl) {
+      album.imageUrl = cachedImageUrl;
+    }
   }
 }
 
@@ -414,6 +518,33 @@ export function getMissingDurationEntries(albums: AlbumEntry[]): MissingDuration
   return sortMissingDurationEntries([...missingTracks.values()]);
 }
 
+export function getMissingArtworkEntries(albums: AlbumEntry[]): MissingArtworkEntry[] {
+  syncArtworkCacheFromStorage();
+
+  return sortMissingArtworkEntries(
+    albums.flatMap((album) => {
+      if (album.imageUrl) {
+        if (!isLastFmPlaceholderImageUrl(album.imageUrl)) {
+          return [];
+        }
+      }
+
+      const albumKey = buildAlbumKey(album.artist, album.album);
+      if (readCachedArtwork(artworkCache[albumKey])) {
+        return [];
+      }
+
+      return [
+        {
+          artist: album.artist,
+          album: album.album,
+          albumKey,
+        },
+      ];
+    }),
+  );
+}
+
 export function saveTrackDurationOverride(track: AlbumTrack, durationMs: number): void {
   const normalizedDuration = Math.max(Math.round(durationMs), 0);
   durationCache[buildKey(track.artist, track.name)] = {
@@ -423,8 +554,29 @@ export function saveTrackDurationOverride(track: AlbumTrack, durationMs: number)
   persistDurationCache(durationCache);
 }
 
-export function buildLastFmTrackUrl(track: AlbumTrack): string {
-  return `https://www.last.fm/music/${encodeURIComponent(track.artist)}/_/${encodeURIComponent(track.name)}`;
+export function saveAlbumArtworkOverride(
+  album: Pick<MissingArtworkEntry, "artist" | "album" | "albumKey">,
+  imageUrl: string,
+): void {
+  artworkCache[album.albumKey] = {
+    imageUrl: imageUrl.trim(),
+    checkedAt: Date.now(),
+  };
+  persistArtworkCache(artworkCache);
+}
+
+export function buildMusicBrainzTrackUrl(track: AlbumTrack): string {
+  return buildMusicBrainzSearchUrl({
+    query: `${track.name} ${track.artist} ${track.album}`,
+    type: "recording",
+  });
+}
+
+export function buildMusicBrainzAlbumUrl(album: Pick<MissingArtworkEntry, "artist" | "album">): string {
+  return buildMusicBrainzSearchUrl({
+    query: `${album.album} ${album.artist}`,
+    type: "release",
+  });
 }
 
 export function sortAlbums(albums: AlbumEntry[], rankingMode: RankingMode): AlbumEntry[] {
@@ -474,26 +626,34 @@ async function lookupMusicBrainzTrackDuration(track: AlbumTrack): Promise<number
     `artist:"${escapeMusicBrainzQueryValue(track.artist)}"`,
     `release:"${escapeMusicBrainzQueryValue(track.album)}"`,
   ].join(" AND ");
-  const url = new URL(MUSICBRAINZ_API_URL);
-  url.search = new URLSearchParams({
-    query,
-    fmt: "json",
-    limit: "5",
-  }).toString();
-
-  const response = await musicBrainzRequestScheduler.schedule(() =>
-    fetch(url.toString(), {
-      headers: {
-        Accept: "application/json",
-      },
-    }),
+  const payload = await callMusicBrainz<MusicBrainzRecordingSearchResponse>(
+    MUSICBRAINZ_RECORDING_API_URL,
+    {
+      query,
+      fmt: "json",
+      limit: "5",
+    },
   );
-  if (!response.ok) {
-    throw new Error(`MusicBrainz request failed with HTTP ${response.status}.`);
-  }
-
-  const payload = (await response.json()) as MusicBrainzRecordingSearchResponse;
   return pickMusicBrainzDuration(payload.recordings ?? [], track);
+}
+
+async function lookupMusicBrainzAlbumArtwork(
+  album: Pick<MissingArtworkEntry, "artist" | "album">,
+): Promise<string> {
+  const query = [
+    `release:"${escapeMusicBrainzQueryValue(album.album)}"`,
+    `artist:"${escapeMusicBrainzQueryValue(album.artist)}"`,
+  ].join(" AND ");
+  const payload = await callMusicBrainz<MusicBrainzReleaseSearchResponse>(
+    MUSICBRAINZ_RELEASE_API_URL,
+    {
+      query,
+      fmt: "json",
+      limit: "5",
+    },
+  );
+
+  return pickMusicBrainzArtwork(payload.releases ?? [], album);
 }
 
 async function callLastFm<T extends object>(
@@ -520,6 +680,27 @@ async function callLastFm<T extends object>(
   }
 
   return payload;
+}
+
+async function callMusicBrainz<T extends object>(
+  endpoint: string,
+  params: Record<string, string>,
+): Promise<T> {
+  const url = new URL(endpoint);
+  url.search = new URLSearchParams(params).toString();
+
+  const response = await musicBrainzRequestScheduler.schedule(() =>
+    fetch(url.toString(), {
+      headers: {
+        Accept: "application/json",
+      },
+    }),
+  );
+  if (!response.ok) {
+    throw new Error(`MusicBrainz request failed with HTTP ${response.status}.`);
+  }
+
+  return (await response.json()) as T;
 }
 
 interface RequestScheduler {
@@ -589,8 +770,21 @@ function readBestImage(images?: LastFmImage[]): string {
   return "";
 }
 
+function isLastFmPlaceholderImageUrl(imageUrl: string): boolean {
+  const normalizedUrl = imageUrl.trim().toLowerCase();
+  if (!normalizedUrl) {
+    return false;
+  }
+
+  return LASTFM_PLACEHOLDER_IMAGE_MARKERS.some((marker) => normalizedUrl.includes(marker));
+}
+
 function buildKey(left: string, right: string): string {
   return `${normalizeForKey(left)}::${normalizeForKey(right)}`;
+}
+
+function buildAlbumKey(artist: string, album: string): string {
+  return buildKey(artist, album);
 }
 
 function sortMissingDurationEntries(entries: MissingDurationEntry[]): MissingDurationEntry[] {
@@ -598,6 +792,12 @@ function sortMissingDurationEntries(entries: MissingDurationEntry[]): MissingDur
     `${left.artist} ${left.album} ${left.name}`.localeCompare(
       `${right.artist} ${right.album} ${right.name}`,
     ),
+  );
+}
+
+function sortMissingArtworkEntries(entries: MissingArtworkEntry[]): MissingArtworkEntry[] {
+  return [...entries].sort((left, right) =>
+    `${left.artist} ${left.album}`.localeCompare(`${right.artist} ${right.album}`),
   );
 }
 
@@ -616,6 +816,20 @@ function buildMissingDurationEntriesFromTracks(tracks: MissingDurationEntry[]): 
         },
       ];
     }),
+  );
+}
+
+function buildMissingArtworkEntriesFromAlbums(albums: MissingArtworkEntry[]): MissingArtworkEntry[] {
+  return sortMissingArtworkEntries(
+    albums.flatMap((album) =>
+      readCachedArtwork(artworkCache[album.albumKey])
+        ? []
+        : [
+            {
+              ...album,
+            },
+          ],
+    ),
   );
 }
 
@@ -706,6 +920,66 @@ function readMusicBrainzArtists(recording: MusicBrainzRecording): string[] {
     .filter(Boolean);
 }
 
+function pickMusicBrainzArtwork(
+  releases: MusicBrainzRelease[],
+  album: Pick<MissingArtworkEntry, "artist" | "album">,
+): string {
+  const normalizedAlbum = normalizeForKey(album.album);
+  const normalizedArtist = normalizeForKey(album.artist);
+  const candidates = releases
+    .map((release) => ({
+      id: release.id ?? "",
+      normalizedTitle: normalizeForKey(release.title ?? ""),
+      normalizedArtists: readMusicBrainzReleaseArtists(release),
+      hasFrontArtwork: Boolean(release["cover-art-archive"]?.front),
+      score:
+        typeof release.score === "string"
+          ? Number.parseInt(release.score, 10) || 0
+          : typeof release.score === "number"
+            ? release.score
+            : 0,
+    }))
+    .filter((release) => release.id && release.hasFrontArtwork)
+    .sort((left, right) => right.score - left.score);
+
+  const exactArtistAndAlbumMatch = candidates.find(
+    (candidate) =>
+      candidate.normalizedTitle === normalizedAlbum &&
+      candidate.normalizedArtists.includes(normalizedArtist),
+  );
+  if (exactArtistAndAlbumMatch) {
+    return buildCoverArtArchiveUrl(exactArtistAndAlbumMatch.id);
+  }
+
+  const exactAlbumMatch = candidates.find(
+    (candidate) => candidate.normalizedTitle === normalizedAlbum,
+  );
+  return exactAlbumMatch ? buildCoverArtArchiveUrl(exactAlbumMatch.id) : "";
+}
+
+function readMusicBrainzReleaseArtists(release: MusicBrainzRelease): string[] {
+  return (release["artist-credit"] ?? [])
+    .map((credit) => normalizeForKey(credit.artist?.name ?? credit.name ?? ""))
+    .filter(Boolean);
+}
+
+function buildCoverArtArchiveUrl(releaseId: string): string {
+  return `https://coverartarchive.org/release/${encodeURIComponent(releaseId)}/front`;
+}
+
+function buildMusicBrainzSearchUrl(params: {
+  query: string;
+  type: "recording" | "release";
+}): string {
+  const url = new URL("https://musicbrainz.org/search");
+  url.search = new URLSearchParams({
+    query: params.query,
+    type: params.type,
+    method: "indexed",
+  }).toString();
+  return url.toString();
+}
+
 function buildRecentTracksQueryKey(username: string, timeRange: TimeRange): string {
   return `${normalizeForKey(username)}::${timeRange.label}`;
 }
@@ -734,8 +1008,36 @@ function loadDurationCache(): Record<string, DurationCacheEntry> {
   }
 }
 
+function loadArtworkCache(): Record<string, ArtworkCacheEntry> {
+  try {
+    const raw = window.localStorage.getItem(ARTWORK_CACHE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([albumKey, value]) => {
+        const entry = normalizeArtworkCacheEntry(value);
+        return entry ? [[albumKey, entry]] : [];
+      }),
+    );
+  } catch (error) {
+    console.warn("Could not load artwork cache", error);
+    return {};
+  }
+}
+
 function persistDurationCache(cache: Record<string, DurationCacheEntry>): void {
   window.localStorage.setItem(DURATION_CACHE_KEY, JSON.stringify(cache));
+}
+
+function persistArtworkCache(cache: Record<string, ArtworkCacheEntry>): void {
+  window.localStorage.setItem(ARTWORK_CACHE_KEY, JSON.stringify(cache));
 }
 
 function syncDurationCacheFromStorage(): void {
@@ -748,6 +1050,18 @@ function syncDurationCacheFromStorage(): void {
   }
 
   Object.assign(durationCache, latestCache);
+}
+
+function syncArtworkCacheFromStorage(): void {
+  const latestCache = loadArtworkCache();
+
+  for (const key of Object.keys(artworkCache)) {
+    if (!(key in latestCache)) {
+      delete artworkCache[key];
+    }
+  }
+
+  Object.assign(artworkCache, latestCache);
 }
 
 function loadRecentTracksCheckpoint(queryKey: string): RecentTracksCheckpoint | null {
@@ -852,6 +1166,26 @@ function normalizeDurationCacheEntry(value: unknown): DurationCacheEntry | null 
     duration: Number.isFinite(entry.duration) ? entry.duration : 0,
     checkedAt: Number.isFinite(entry.checkedAt) ? entry.checkedAt : 0,
   };
+}
+
+function normalizeArtworkCacheEntry(value: unknown): ArtworkCacheEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entry = value as Partial<ArtworkCacheEntry>;
+  if (typeof entry.imageUrl !== "string" || typeof entry.checkedAt !== "number") {
+    return null;
+  }
+
+  return {
+    imageUrl: entry.imageUrl.trim(),
+    checkedAt: Number.isFinite(entry.checkedAt) ? entry.checkedAt : 0,
+  };
+}
+
+function readCachedArtwork(entry?: ArtworkCacheEntry): string {
+  return entry?.imageUrl.trim() ?? "";
 }
 
 async function mapWithConcurrency<T>(

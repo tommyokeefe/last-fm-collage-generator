@@ -3,15 +3,20 @@ import { useEffect, useMemo, useState } from "react";
 import { renderExportBlob } from "./lib/collage";
 import {
   aggregateAlbums,
+  applyCachedArtwork,
   applyCachedDurations,
-  buildLastFmTrackUrl,
+  buildMusicBrainzAlbumUrl,
+  buildMusicBrainzTrackUrl,
   buildTimeRange,
+  fetchMissingArtworkFromMusicBrainz,
   fetchMissingDurationsFromMusicBrainz,
   fetchRecentTracks,
   formatMetric,
+  getMissingArtworkEntries,
   getMissingDurationEntries,
   getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
+  saveAlbumArtworkOverride,
   saveTrackDurationOverride,
   sortAlbums,
 } from "./lib/lastfm";
@@ -20,6 +25,7 @@ import type {
   ExportRenderOptions,
   FetchProgressState,
   GridSize,
+  MissingArtworkEntry,
   MissingDurationEntry,
   PreviewGridStyle,
   RankingMode,
@@ -30,7 +36,7 @@ import type {
 } from "./types";
 
 const SETTINGS_KEY = "lastfm-collage-settings";
-type PreviewMode = "config" | "export" | "missing-durations";
+type PreviewMode = "config" | "export" | "missing-durations" | "missing-artwork";
 const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "7d", label: "Last 7 days" },
   { value: "1m", label: "Last 30 days" },
@@ -79,7 +85,9 @@ function App() {
   const [summary, setSummary] = useState<SummaryState | null>(null);
   const [renderedAlbums, setRenderedAlbums] = useState<AlbumEntry[]>([]);
   const [generatedResult, setGeneratedResult] = useState<GeneratedResultState | null>(null);
+  const [missingArtwork, setMissingArtwork] = useState<MissingArtworkEntry[]>([]);
   const [missingDurations, setMissingDurations] = useState<MissingDurationEntry[]>([]);
+  const [imageOverrides, setImageOverrides] = useState<Record<string, string>>({});
   const [durationOverrides, setDurationOverrides] = useState<Record<string, string>>({});
   const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
   const [exportPreviewUrl, setExportPreviewUrl] = useState<string | null>(null);
@@ -126,13 +134,16 @@ function App() {
   }, [columns, generatedQuery, generatedResult, rows]);
 
   useEffect(() => {
-    if (
-      previewMode === "missing-durations" &&
-      (settings.rankingMode !== "listening-time" || missingDurations.length === 0)
-    ) {
+    if (previewMode === "missing-durations" &&
+      (settings.rankingMode !== "listening-time" || missingDurations.length === 0)) {
+      setPreviewMode("config");
+      return;
+    }
+
+    if (previewMode === "missing-artwork" && missingArtwork.length === 0) {
       setPreviewMode("config");
     }
-  }, [missingDurations.length, previewMode, settings.rankingMode]);
+  }, [missingArtwork.length, missingDurations.length, previewMode, settings.rankingMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,6 +196,7 @@ function App() {
     const apiKey = getApiKey();
     if (!apiKey) {
       setGeneratedResult(null);
+      setMissingArtwork([]);
       setMissingDurations([]);
       setStatus({
         tone: "error",
@@ -196,6 +208,7 @@ function App() {
 
     if (!trimmedUsername) {
       setGeneratedResult(null);
+      setMissingArtwork([]);
       setMissingDurations([]);
       setStatus({
         tone: "error",
@@ -236,9 +249,11 @@ function App() {
           }),
       );
       const aggregated = aggregateAlbums(recentTracks.items);
+      applyCachedArtwork(aggregated);
 
       if (aggregated.length === 0) {
         setGeneratedResult(null);
+        setMissingArtwork([]);
         setMissingDurations([]);
         setRenderedAlbums([]);
         setNextExportPreview(null);
@@ -251,6 +266,7 @@ function App() {
         return;
       }
 
+      const nextMissingArtwork = getMissingArtworkEntries(aggregated);
       let nextMissingDurations: MissingDurationEntry[] = [];
       if (isListeningTimeMode) {
         setStatus({
@@ -287,7 +303,9 @@ function App() {
         },
         albums: sorted,
       });
+      setMissingArtwork(nextMissingArtwork);
       setMissingDurations(nextMissingDurations);
+      setImageOverrides({});
       setDurationOverrides({});
       setRenderedAlbums(nextRenderedAlbums);
       setSummary({
@@ -304,6 +322,7 @@ function App() {
     } catch (error) {
       console.error(error);
       setGeneratedResult(null);
+      setMissingArtwork([]);
       setMissingDurations([]);
       const resumeState = getRecentTracksResumeState(trimmedUsername, timeRange);
       const baseMessage = error instanceof Error ? error.message : "Something went wrong.";
@@ -423,6 +442,63 @@ function App() {
     }
   }
 
+  async function handleMissingArtworkFallbackFetch() {
+    if (!generatedResult || missingArtwork.length === 0) {
+      return;
+    }
+
+    setIsBusy(true);
+    setStatus({
+      tone: "info",
+      message: "Trying MusicBrainz for missing album artwork...",
+    });
+
+    try {
+      const fallbackResult = await fetchMissingArtworkFromMusicBrainz(
+        missingArtwork,
+        (message) =>
+          setStatus((current) => ({
+            tone: "info",
+            message,
+            progress: current.progress,
+          })),
+        (progress) =>
+          setStatus({
+            tone: "info",
+            message: `Trying MusicBrainz for missing album artwork... ${progress.completed} of ${progress.total}`,
+            progress,
+          }),
+      );
+      const nextAlbums = [...generatedResult.albums];
+      applyCachedArtwork(nextAlbums);
+      const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
+      const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
+      const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
+
+      setGeneratedResult({
+        ...generatedResult,
+        albums: nextSortedAlbums,
+      });
+      setMissingArtwork(nextMissingArtwork);
+      setRenderedAlbums(nextRenderedAlbums);
+      setStatus({
+        tone: fallbackResult.resolvedCount > 0 ? "success" : "info",
+        message:
+          fallbackResult.resolvedCount > 0
+            ? `MusicBrainz resolved ${fallbackResult.resolvedCount} missing cover${fallbackResult.resolvedCount === 1 ? "" : "s"}.`
+            : "MusicBrainz did not resolve any additional missing album artwork.",
+      });
+    } catch (error) {
+      console.error(error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "MusicBrainz artwork lookup failed.",
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   function handleDurationOverrideSave(track: MissingDurationEntry) {
     const rawValue = durationOverrides[track.trackKey]?.trim() ?? "";
     const seconds = Number(rawValue);
@@ -465,6 +541,93 @@ function App() {
     setStatus({
       tone: "success",
       message: `Saved a local duration override for ${track.name}.`,
+    });
+  }
+
+  function handleArtworkOverrideSave(album: MissingArtworkEntry) {
+    const rawValue = imageOverrides[album.albumKey]?.trim() ?? "";
+    if (!rawValue) {
+      setStatus({
+        tone: "error",
+        message: `Enter a valid image URL for ${album.album}.`,
+      });
+      return;
+    }
+
+    try {
+      const parsedUrl = new URL(rawValue);
+      if (!/^https?:$/.test(parsedUrl.protocol)) {
+        throw new Error("Unsupported protocol");
+      }
+    } catch {
+      setStatus({
+        tone: "error",
+        message: `Enter a valid image URL for ${album.album}.`,
+      });
+      return;
+    }
+
+    if (!generatedResult) {
+      return;
+    }
+
+    saveAlbumArtworkOverride(album, rawValue);
+    const nextAlbums = [...generatedResult.albums];
+    applyCachedArtwork(nextAlbums);
+    const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
+    const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
+
+    setGeneratedResult({
+      ...generatedResult,
+      albums: nextSortedAlbums,
+    });
+    setMissingArtwork(nextMissingArtwork);
+    setImageOverrides((current) => {
+      const next = { ...current };
+      delete next[album.albumKey];
+      return next;
+    });
+    setRenderedAlbums(nextSortedAlbums.slice(0, rows * columns));
+    setStatus({
+      tone: "success",
+      message: `Saved a local artwork override for ${album.album}.`,
+    });
+  }
+
+  function handleAlbumRemove(album: AlbumEntry) {
+    if (!generatedResult) {
+      return;
+    }
+
+    const nextSortedAlbums = generatedResult.albums.filter((candidate) => candidate !== album);
+    const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
+    const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
+    const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
+
+    setGeneratedResult({
+      ...generatedResult,
+      albums: nextSortedAlbums,
+    });
+    setMissingArtwork(nextMissingArtwork);
+    setMissingDurations(nextMissingDurations);
+    setRenderedAlbums(nextRenderedAlbums);
+    setResultsCopy(
+      nextRenderedAlbums.length > 0
+        ? buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length)
+        : "No albums remain in the collage.",
+    );
+    setSummary((current) =>
+      current
+        ? {
+            ...current,
+            albums: nextSortedAlbums.length,
+            durationGaps: nextMissingDurations.length,
+          }
+        : current,
+    );
+    setStatus({
+      tone: "success",
+      message: `Removed ${album.album} from the current collage.`,
     });
   }
 
@@ -663,6 +826,16 @@ function App() {
               >
                 True PNG preview
               </button>
+              {missingArtwork.length > 0 ? (
+                <button
+                  type="button"
+                  className={previewMode === "missing-artwork" ? "is-active" : ""}
+                  onClick={() => setPreviewMode("missing-artwork")}
+                  aria-pressed={previewMode === "missing-artwork"}
+                >
+                  Missing artwork ({missingArtwork.length})
+                </button>
+              ) : null}
               {settings.rankingMode === "listening-time" && missingDurations.length > 0 ? (
                 <button
                   type="button"
@@ -680,7 +853,22 @@ function App() {
             <PreviewGrid
               albums={renderedAlbums}
               columns={columns}
+              onRemove={handleAlbumRemove}
               rankingMode={settings.rankingMode}
+            />
+          ) : previewMode === "missing-artwork" ? (
+            <MissingArtworkPanel
+              items={missingArtwork}
+              imageOverrides={imageOverrides}
+              isFetchingFallback={isBusy}
+              onImageChange={(albumKey, value) =>
+                setImageOverrides((current) => ({
+                  ...current,
+                  [albumKey]: value,
+                }))
+              }
+              onFetchFallback={() => void handleMissingArtworkFallbackFetch()}
+              onSave={handleArtworkOverrideSave}
             />
           ) : previewMode === "missing-durations" ? (
             <MissingDurationPanel
@@ -758,6 +946,78 @@ interface SummaryPanelProps {
   summary: SummaryState | null;
 }
 
+interface MissingArtworkPanelProps {
+  items: MissingArtworkEntry[];
+  imageOverrides: Record<string, string>;
+  isFetchingFallback: boolean;
+  onImageChange: (albumKey: string, value: string) => void;
+  onFetchFallback: () => void;
+  onSave: (album: MissingArtworkEntry) => void;
+}
+
+function MissingArtworkPanel({
+  items,
+  imageOverrides,
+  isFetchingFallback,
+  onImageChange,
+  onFetchFallback,
+  onSave,
+}: MissingArtworkPanelProps) {
+  if (items.length === 0) {
+    return (
+      <div className="empty-state missing-artwork-empty">
+        <p>No missing artwork remains.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="missing-artwork-panel">
+      <p className="results-copy">
+        These albums are missing cover art from Last.fm. You can try fetching album artwork from
+        MusicBrainz and the Cover Art Archive without regenerating the collage.
+      </p>
+      <div className="missing-artwork-toolbar">
+        <button type="button" onClick={onFetchFallback} disabled={isFetchingFallback}>
+          {isFetchingFallback ? "Trying MusicBrainz..." : "Try fetching artwork from MusicBrainz"}
+        </button>
+      </div>
+      <div className="missing-artwork-list">
+        {items.map((album) => (
+          <article key={album.albumKey} className="missing-artwork-item">
+            <div className="missing-artwork-copy">
+              <strong>{album.album}</strong>
+              <span>{album.artist}</span>
+            </div>
+            <div className="missing-artwork-actions">
+              <a
+                className="secondary-link"
+                href={buildMusicBrainzAlbumUrl(album)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Update on MusicBrainz
+              </a>
+              <label className="image-override-field">
+                <span>Local image URL</span>
+                <input
+                  type="url"
+                  placeholder="https://example.com/cover.jpg"
+                  value={imageOverrides[album.albumKey] ?? ""}
+                  onChange={(event) => onImageChange(album.albumKey, event.target.value)}
+                />
+              </label>
+              <button type="button" onClick={() => onSave(album)}>
+                Save local override
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface MissingDurationPanelProps {
   items: MissingDurationEntry[];
   durationOverrides: Record<string, string>;
@@ -806,11 +1066,11 @@ function MissingDurationPanel({
             <div className="missing-duration-actions">
               <a
                 className="secondary-link"
-                href={buildLastFmTrackUrl(track)}
+                href={buildMusicBrainzTrackUrl(track)}
                 target="_blank"
                 rel="noreferrer"
               >
-                Fix on Last.fm
+                Update on MusicBrainz
               </a>
               <label className="duration-override-field">
                 <span>Local duration (sec)</span>
@@ -863,10 +1123,11 @@ function SummaryPanel({ summary }: SummaryPanelProps) {
 interface PreviewGridProps {
   albums: AlbumEntry[];
   columns: number;
+  onRemove: (album: AlbumEntry) => void;
   rankingMode: RankingMode;
 }
 
-function PreviewGrid({ albums, columns, rankingMode }: PreviewGridProps) {
+function PreviewGrid({ albums, columns, onRemove, rankingMode }: PreviewGridProps) {
   const style: PreviewGridStyle = {
     "--columns": columns,
   };
@@ -893,6 +1154,14 @@ function PreviewGrid({ albums, columns, rankingMode }: PreviewGridProps) {
           key={`${album.artist}-${album.album}-${index}`}
           className={`album-tile ${album.imageUrl ? "" : "is-placeholder"}`}
         >
+          <button
+            type="button"
+            className="tile-remove-button"
+            onClick={() => onRemove(album)}
+            aria-label={`Remove ${album.album} by ${album.artist} from the collage`}
+          >
+            Remove
+          </button>
           {album.imageUrl ? (
             <img src={album.imageUrl} alt={`${album.album} by ${album.artist}`} />
           ) : (

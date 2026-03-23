@@ -75,6 +75,60 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Export PNG" })).toBeEnabled();
   });
 
+  it("removes an album from the current collage without refetching", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                date: { uts: "123" },
+              },
+              {
+                artist: { name: "Artist Two" },
+                album: { "#text": "Album B" },
+                name: "Track 2",
+                image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
+                date: { uts: "456" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove Album A by Artist One from the collage" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Removed Album A from the current collage.")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Album A")).not.toBeInTheDocument();
+    expect(screen.getByText("Album B")).toBeInTheDocument();
+    expect(screen.getByText("Showing the top 1 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("toggles to an exact PNG preview", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -563,10 +617,10 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Missing durations (1)" }));
 
-    const lastFmLink = screen.getByRole("link", { name: "Fix on Last.fm" });
-    expect(lastFmLink).toHaveAttribute(
+    const musicBrainzLink = screen.getByRole("link", { name: "Update on MusicBrainz" });
+    expect(musicBrainzLink).toHaveAttribute(
       "href",
-      "https://www.last.fm/music/Artist%20One/_/Track%201",
+      "https://musicbrainz.org/search?query=Track+1+Artist+One+Album+A&type=recording&method=indexed",
     );
 
     fireEvent.change(screen.getByLabelText("Local duration (sec)"), {
@@ -644,5 +698,68 @@ describe("App", () => {
 
     expect(screen.queryByRole("button", { name: "Missing durations (1)" })).not.toBeInTheDocument();
     expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("shows MusicBrainz artwork links and lets users save a local image override", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [
+                  {
+                    "#text":
+                      "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
+                  },
+                ],
+                date: { uts: "123" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Missing artwork (1)" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Missing artwork (1)" }));
+
+    const musicBrainzLink = screen.getByRole("link", { name: "Update on MusicBrainz" });
+    expect(musicBrainzLink).toHaveAttribute(
+      "href",
+      "https://musicbrainz.org/search?query=Album+A+Artist+One&type=release&method=indexed",
+    );
+
+    fireEvent.change(screen.getByLabelText("Local image URL"), {
+      target: { value: "https://example.com/override.jpg" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save local override" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Saved a local artwork override for Album A.")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: "Missing artwork (1)" })).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Album A by Artist One" })).toHaveAttribute(
+      "src",
+      "https://example.com/override.jpg",
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
