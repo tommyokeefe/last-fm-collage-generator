@@ -841,15 +841,6 @@ function App() {
 
   function handleAlbumEditSave() {
     const trimmedDraft = validateAlbumEditDraft();
-    if (!trimmedDraft) {
-      return;
-    }
-
-    applyAlbumEditDraft(trimmedDraft);
-  }
-
-  function handleAlbumEditCacheSave() {
-    const trimmedDraft = validateAlbumEditDraft();
     if (!trimmedDraft || !editingAlbum) {
       return;
     }
@@ -1168,7 +1159,6 @@ function App() {
           }
           onClose={handleAlbumEditClose}
           onRefreshArtwork={() => void handleAlbumArtworkRefresh()}
-          onSaveToCache={handleAlbumEditCacheSave}
           onSave={handleAlbumEditSave}
         />
       ) : null}
@@ -1232,7 +1222,6 @@ interface AlbumEditModalProps {
   onChange: (key: keyof AlbumEditDraft, value: string) => void;
   onClose: () => void;
   onRefreshArtwork: () => void;
-  onSaveToCache: () => void;
   onSave: () => void;
 }
 
@@ -1243,7 +1232,6 @@ function AlbumEditModal({
   onChange,
   onClose,
   onRefreshArtwork,
-  onSaveToCache,
   onSave,
 }: AlbumEditModalProps) {
   return (
@@ -1317,9 +1305,6 @@ function AlbumEditModal({
         <div className="modal-actions">
           <button type="button" onClick={onClose}>
             Cancel
-          </button>
-          <button type="button" onClick={onSaveToCache}>
-            Add changes to local cache
           </button>
           <button type="button" onClick={onSave}>
             Save changes

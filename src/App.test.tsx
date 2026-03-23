@@ -144,7 +144,7 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("Album title"), {
       target: { value: "Album A (Cached)" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add changes to local cache" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => {
       expect(screen.getByText("Saved edits for Album A (Cached).")).toBeInTheDocument();
