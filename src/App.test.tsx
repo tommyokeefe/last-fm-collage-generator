@@ -75,7 +75,7 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Export PNG" })).toBeEnabled();
   });
 
-  it("removes an album from the current collage without refetching", async () => {
+  it("opens the album editor and saves metadata changes without refetching", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
@@ -116,16 +116,30 @@ describe("App", () => {
     });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Remove Album A by Artist One from the collage" }),
+      screen.getByRole("button", { name: "Edit Album A by Artist One" }),
     );
 
+    expect(screen.getByRole("dialog", { name: "Edit album metadata" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Album title"), {
+      target: { value: "Album A (Edited)" },
+    });
+    fireEvent.change(screen.getByLabelText("Image URL"), {
+      target: { value: "https://example.com/edited.jpg" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
     await waitFor(() => {
-      expect(screen.getByText("Removed Album A from the current collage.")).toBeInTheDocument();
+      expect(screen.getByText("Saved edits for Album A (Edited).")).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("Album A")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Edit album metadata" })).not.toBeInTheDocument();
+    expect(screen.getByText("Album A (Edited)")).toBeInTheDocument();
     expect(screen.getByText("Album B")).toBeInTheDocument();
-    expect(screen.getByText("Showing the top 1 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Album A (Edited) by Artist One" })).toHaveAttribute(
+      "src",
+      "https://example.com/edited.jpg",
+    );
+    expect(screen.getByText("Showing the top 2 albums for tommy, ranked by album plays.")).toBeInTheDocument();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -304,6 +318,53 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
     });
+  });
+
+  it("highlights albums with missing artwork and duration gaps in configuration view", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [
+                    {
+                      "#text":
+                        "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
+                    },
+                  ],
+                  date: { uts: "123" },
+                },
+              ],
+              "@attr": { totalPages: "1" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
+      );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("! Artwork missing")).toBeInTheDocument();
+    expect(screen.getByText("! Duration gaps")).toBeInTheDocument();
   });
 
   it("shows a two-step progress flow for listening-time mode", async () => {
@@ -740,10 +801,10 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Missing artwork (1)" }));
 
-    const musicBrainzLink = screen.getByRole("link", { name: "Update on MusicBrainz" });
-    expect(musicBrainzLink).toHaveAttribute(
+    const lastFmLink = screen.getByRole("link", { name: "Update artwork on Last.fm" });
+    expect(lastFmLink).toHaveAttribute(
       "href",
-      "https://musicbrainz.org/search?query=Album+A+Artist+One&type=release&method=indexed",
+      "https://www.last.fm/music/Artist%20One/Album%20A",
     );
 
     fireEvent.change(screen.getByLabelText("Local image URL"), {

@@ -98,10 +98,28 @@ async function drawAlbumTile(
   if (options.showAlbumInfo) {
     context.fillStyle = "#eef2ff";
     context.font = "700 28px Inter, sans-serif";
-    drawWrappedText(context, album.album, x + 24, y + tileSize - 88, tileSize - 48, 34, 2);
+    const albumTitleY = y + tileSize - 88;
+    const albumTitleLineHeight = 34;
+    const albumTitleLineCount = drawWrappedText(
+      context,
+      album.album,
+      x + 24,
+      albumTitleY,
+      tileSize - 48,
+      albumTitleLineHeight,
+      2,
+    );
     context.font = "500 22px Inter, sans-serif";
     context.fillStyle = "#d6e0ff";
-    drawWrappedText(context, album.artist, x + 24, y + tileSize - 28, tileSize - 48, 28, 1);
+    drawWrappedText(
+      context,
+      album.artist,
+      x + 24,
+      calculateFollowingTextBaseline(albumTitleY, albumTitleLineCount, albumTitleLineHeight, 26),
+      tileSize - 48,
+      28,
+      1,
+    );
   }
 
   context.restore();
@@ -129,10 +147,28 @@ function drawPlaceholderTile(
   if (options.showAlbumInfo) {
     context.fillStyle = "#eef2ff";
     context.font = "700 36px Inter, sans-serif";
-    drawWrappedText(context, album.album, x + 28, y + tileSize * 0.48, tileSize - 56, 42, 3);
+    const albumTitleY = y + tileSize * 0.48;
+    const albumTitleLineHeight = 42;
+    const albumTitleLineCount = drawWrappedText(
+      context,
+      album.album,
+      x + 28,
+      albumTitleY,
+      tileSize - 56,
+      albumTitleLineHeight,
+      3,
+    );
     context.font = "500 26px Inter, sans-serif";
     context.fillStyle = "#d6e0ff";
-    drawWrappedText(context, album.artist, x + 28, y + tileSize * 0.72, tileSize - 56, 30, 2);
+    drawWrappedText(
+      context,
+      album.artist,
+      x + 28,
+      calculateFollowingTextBaseline(albumTitleY, albumTitleLineCount, albumTitleLineHeight, 34),
+      tileSize - 56,
+      30,
+      2,
+    );
   }
 }
 
@@ -144,7 +180,7 @@ function drawWrappedText(
   maxWidth: number,
   lineHeight: number,
   maxLines: number,
-): void {
+): number {
   const words = text.split(/\s+/);
   const lines: string[] = [];
   let currentLine = "";
@@ -177,6 +213,17 @@ function drawWrappedText(
   visibleLines.forEach((line, index) => {
     context.fillText(line, x, y + index * lineHeight);
   });
+
+  return visibleLines.length;
+}
+
+export function calculateFollowingTextBaseline(
+  startY: number,
+  lineCount: number,
+  lineHeight: number,
+  gap: number,
+): number {
+  return startY + Math.max(lineCount - 1, 0) * lineHeight + gap;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {

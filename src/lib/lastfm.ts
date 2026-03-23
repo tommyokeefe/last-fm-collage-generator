@@ -572,11 +572,8 @@ export function buildMusicBrainzTrackUrl(track: AlbumTrack): string {
   });
 }
 
-export function buildMusicBrainzAlbumUrl(album: Pick<MissingArtworkEntry, "artist" | "album">): string {
-  return buildMusicBrainzSearchUrl({
-    query: `${album.album} ${album.artist}`,
-    type: "release",
-  });
+export function buildLastFmAlbumUrl(album: Pick<MissingArtworkEntry, "artist" | "album">): string {
+  return `https://www.last.fm/music/${encodeURIComponent(album.artist)}/${encodeURIComponent(album.album)}`;
 }
 
 export function sortAlbums(albums: AlbumEntry[], rankingMode: RankingMode): AlbumEntry[] {

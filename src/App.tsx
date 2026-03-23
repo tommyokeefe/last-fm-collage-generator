@@ -5,7 +5,7 @@ import {
   aggregateAlbums,
   applyCachedArtwork,
   applyCachedDurations,
-  buildMusicBrainzAlbumUrl,
+  buildLastFmAlbumUrl,
   buildMusicBrainzTrackUrl,
   buildTimeRange,
   fetchMissingArtworkFromMusicBrainz,
@@ -73,6 +73,12 @@ interface GeneratedResultState {
   albums: AlbumEntry[];
 }
 
+interface AlbumEditDraft {
+  album: string;
+  artist: string;
+  imageUrl: string;
+}
+
 function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [status, setStatus] = useState<StatusState>({
@@ -85,6 +91,8 @@ function App() {
   const [summary, setSummary] = useState<SummaryState | null>(null);
   const [renderedAlbums, setRenderedAlbums] = useState<AlbumEntry[]>([]);
   const [generatedResult, setGeneratedResult] = useState<GeneratedResultState | null>(null);
+  const [editingAlbum, setEditingAlbum] = useState<AlbumEntry | null>(null);
+  const [albumEditDraft, setAlbumEditDraft] = useState<AlbumEditDraft | null>(null);
   const [missingArtwork, setMissingArtwork] = useState<MissingArtworkEntry[]>([]);
   const [missingDurations, setMissingDurations] = useState<MissingDurationEntry[]>([]);
   const [imageOverrides, setImageOverrides] = useState<Record<string, string>>({});
@@ -594,12 +602,63 @@ function App() {
     });
   }
 
-  function handleAlbumRemove(album: AlbumEntry) {
-    if (!generatedResult) {
+  function handleAlbumEditOpen(album: AlbumEntry) {
+    setEditingAlbum(album);
+    setAlbumEditDraft({
+      album: album.album,
+      artist: album.artist,
+      imageUrl: album.imageUrl,
+    });
+  }
+
+  function handleAlbumEditClose() {
+    setEditingAlbum(null);
+    setAlbumEditDraft(null);
+  }
+
+  function handleAlbumEditSave() {
+    if (!generatedResult || !editingAlbum || !albumEditDraft) {
       return;
     }
 
-    const nextSortedAlbums = generatedResult.albums.filter((candidate) => candidate !== album);
+    const trimmedAlbum = albumEditDraft.album.trim();
+    const trimmedArtist = albumEditDraft.artist.trim();
+    const trimmedImageUrl = albumEditDraft.imageUrl.trim();
+
+    if (!trimmedAlbum || !trimmedArtist) {
+      setStatus({
+        tone: "error",
+        message: "Enter both an album title and an artist label.",
+      });
+      return;
+    }
+
+    if (trimmedImageUrl) {
+      try {
+        const parsedUrl = new URL(trimmedImageUrl);
+        if (!/^https?:$/.test(parsedUrl.protocol)) {
+          throw new Error("Unsupported protocol");
+        }
+      } catch {
+        setStatus({
+          tone: "error",
+          message: `Enter a valid image URL for ${trimmedAlbum}.`,
+        });
+        return;
+      }
+    }
+
+    const nextSortedAlbums = generatedResult.albums.map((candidate) =>
+      candidate === editingAlbum
+        ? {
+            ...candidate,
+            album: trimmedAlbum,
+            artist: trimmedArtist,
+            artistNames: new Set([trimmedArtist]),
+            imageUrl: trimmedImageUrl,
+          }
+        : candidate,
+    );
     const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
     const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
     const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
@@ -627,8 +686,9 @@ function App() {
     );
     setStatus({
       tone: "success",
-      message: `Removed ${album.album} from the current collage.`,
+      message: `Saved edits for ${trimmedAlbum}.`,
     });
+    handleAlbumEditClose();
   }
 
   function setNextExportPreview(nextBlob: Blob | null) {
@@ -853,8 +913,9 @@ function App() {
             <PreviewGrid
               albums={renderedAlbums}
               columns={columns}
-              onRemove={handleAlbumRemove}
+              onEdit={handleAlbumEditOpen}
               rankingMode={settings.rankingMode}
+              showDurationWarnings={settings.rankingMode === "listening-time"}
             />
           ) : previewMode === "missing-artwork" ? (
             <MissingArtworkPanel
@@ -893,6 +954,23 @@ function App() {
           )}
         </section>
       </main>
+      {editingAlbum && albumEditDraft ? (
+        <AlbumEditModal
+          draft={albumEditDraft}
+          onChange={(key, value) =>
+            setAlbumEditDraft((current) =>
+              current
+                ? {
+                    ...current,
+                    [key]: value,
+                  }
+                : current,
+            )
+          }
+          onClose={handleAlbumEditClose}
+          onSave={handleAlbumEditSave}
+        />
+      ) : null}
     </div>
   );
 }
@@ -946,6 +1024,79 @@ interface SummaryPanelProps {
   summary: SummaryState | null;
 }
 
+interface AlbumEditModalProps {
+  draft: AlbumEditDraft;
+  onChange: (key: keyof AlbumEditDraft, value: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+}
+
+function AlbumEditModal({ draft, onChange, onClose, onSave }: AlbumEditModalProps) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal-shell" role="dialog" aria-modal="true" aria-label="Edit album metadata">
+        <div className="modal-header">
+          <div>
+            <h2>Edit album</h2>
+            <p className="results-copy">
+              Update the current collage entry by changing its image, title, or artist label.
+            </p>
+          </div>
+          <button type="button" className="modal-close-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="album-edit-layout">
+          <div className="album-edit-preview">
+            {draft.imageUrl ? (
+              <img src={draft.imageUrl} alt={`${draft.album} by ${draft.artist}`} />
+            ) : (
+              <div className="empty-state album-edit-placeholder">
+                <p>No image set.</p>
+              </div>
+            )}
+          </div>
+          <div className="album-edit-fields">
+            <label>
+              <span>Album title</span>
+              <input
+                type="text"
+                value={draft.album}
+                onChange={(event) => onChange("album", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Artist label</span>
+              <input
+                type="text"
+                value={draft.artist}
+                onChange={(event) => onChange("artist", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Image URL</span>
+              <input
+                type="url"
+                placeholder="https://example.com/cover.jpg"
+                value={draft.imageUrl}
+                onChange={(event) => onChange("imageUrl", event.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" onClick={onSave}>
+            Save changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface MissingArtworkPanelProps {
   items: MissingArtworkEntry[];
   imageOverrides: Record<string, string>;
@@ -992,11 +1143,11 @@ function MissingArtworkPanel({
             <div className="missing-artwork-actions">
               <a
                 className="secondary-link"
-                href={buildMusicBrainzAlbumUrl(album)}
+                href={buildLastFmAlbumUrl(album)}
                 target="_blank"
                 rel="noreferrer"
               >
-                Update on MusicBrainz
+                Update artwork on Last.fm
               </a>
               <label className="image-override-field">
                 <span>Local image URL</span>
@@ -1123,11 +1274,18 @@ function SummaryPanel({ summary }: SummaryPanelProps) {
 interface PreviewGridProps {
   albums: AlbumEntry[];
   columns: number;
-  onRemove: (album: AlbumEntry) => void;
+  onEdit: (album: AlbumEntry) => void;
   rankingMode: RankingMode;
+  showDurationWarnings: boolean;
 }
 
-function PreviewGrid({ albums, columns, onRemove, rankingMode }: PreviewGridProps) {
+function PreviewGrid({
+  albums,
+  columns,
+  onEdit,
+  rankingMode,
+  showDurationWarnings,
+}: PreviewGridProps) {
   const style: PreviewGridStyle = {
     "--columns": columns,
   };
@@ -1149,34 +1307,47 @@ function PreviewGrid({ albums, columns, onRemove, rankingMode }: PreviewGridProp
       aria-live="polite"
       aria-label="Generated collage preview"
     >
-      {albums.map((album, index) => (
-        <article
-          key={`${album.artist}-${album.album}-${index}`}
-          className={`album-tile ${album.imageUrl ? "" : "is-placeholder"}`}
-        >
+      {albums.map((album, index) => {
+        const hasMissingArtwork = getMissingArtworkEntries([album]).length > 0;
+        const hasMissingDurations =
+          showDurationWarnings && getMissingDurationEntries([album]).length > 0;
+        const warningClassName =
+          hasMissingArtwork && hasMissingDurations
+            ? "has-critical-warning"
+            : hasMissingArtwork || hasMissingDurations
+              ? "has-warning"
+              : "";
+
+        return (
           <button
             type="button"
-            className="tile-remove-button"
-            onClick={() => onRemove(album)}
-            aria-label={`Remove ${album.album} by ${album.artist} from the collage`}
+            key={`${album.artist}-${album.album}-${index}`}
+            className={`album-tile album-tile-button ${album.imageUrl ? "" : "is-placeholder"} ${warningClassName}`.trim()}
+            onClick={() => onEdit(album)}
+            aria-label={`Edit ${album.album} by ${album.artist}`}
           >
-            Remove
-          </button>
-          {album.imageUrl ? (
-            <img src={album.imageUrl} alt={`${album.album} by ${album.artist}`} />
-          ) : (
-            <div className="placeholder-copy">
+            {hasMissingArtwork || hasMissingDurations ? (
+              <div className="tile-warning-stack" aria-hidden="true">
+                {hasMissingArtwork ? <span className="tile-warning-badge">! Artwork missing</span> : null}
+                {hasMissingDurations ? <span className="tile-warning-badge">! Duration gaps</span> : null}
+              </div>
+            ) : null}
+            {album.imageUrl ? (
+              <img src={album.imageUrl} alt={`${album.album} by ${album.artist}`} />
+            ) : (
+              <div className="placeholder-copy">
+                <strong>{album.album}</strong>
+                <span>{album.artist}</span>
+              </div>
+            )}
+            <div className="tile-meta">
               <strong>{album.album}</strong>
               <span>{album.artist}</span>
+              <div className="tile-metric">{formatMetric(album, rankingMode)}</div>
             </div>
-          )}
-          <div className="tile-meta">
-            <strong>{album.album}</strong>
-            <span>{album.artist}</span>
-            <div className="tile-metric">{formatMetric(album, rankingMode)}</div>
-          </div>
-        </article>
-      ))}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -1,8 +1,8 @@
 import {
   aggregateAlbums,
   applyCachedArtwork,
+  buildLastFmAlbumUrl,
   buildTimeRange,
-  buildMusicBrainzAlbumUrl,
   buildMusicBrainzTrackUrl,
   createRequestScheduler,
   fetchMissingArtworkFromMusicBrainz,
@@ -367,12 +367,12 @@ describe("lastfm helpers", () => {
       "https://musicbrainz.org/search?query=Track+1+Artist+One+Album+A&type=recording&method=indexed",
     );
     expect(
-      buildMusicBrainzAlbumUrl({
+      buildLastFmAlbumUrl({
         artist: "Artist One",
         album: "Album A",
       }),
     ).toBe(
-      "https://musicbrainz.org/search?query=Album+A+Artist+One&type=release&method=indexed",
+      "https://www.last.fm/music/Artist%20One/Album%20A",
     );
   });
 
