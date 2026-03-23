@@ -29,8 +29,14 @@ describe("lastfm helpers", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns overall range without timestamps", () => {
-    expect(buildTimeRange("overall")).toEqual({ label: "overall" });
+  it("returns a bounded 7 day range with timestamps", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+
+    expect(buildTimeRange("7d")).toEqual({
+      label: "7d",
+      from: Math.floor(1_000_000 / 1000) - 7 * 24 * 60 * 60,
+      to: Math.floor(1_000_000 / 1000),
+    });
   });
 
   it("aggregates albums from extended artist payloads", () => {

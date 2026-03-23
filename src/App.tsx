@@ -49,10 +49,6 @@ type PreviewMode = "config" | "export" | "missing-data";
 const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "7d", label: "Last 7 days" },
   { value: "1m", label: "Last 30 days" },
-  { value: "3m", label: "Last 90 days" },
-  { value: "6m", label: "Last 180 days" },
-  { value: "12m", label: "Last 365 days" },
-  { value: "overall", label: "Overall" },
 ];
 const GRID_OPTIONS: ReadonlyArray<GridSize> = [
   "3x3",
