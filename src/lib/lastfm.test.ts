@@ -769,7 +769,7 @@ describe("lastfm helpers", () => {
     let currentTime = 0;
     const startTimes: number[] = [];
     const waits: number[] = [];
-    const scheduler = createRequestScheduler(200, {
+    const scheduler = createRequestScheduler(1000, {
       now: () => currentTime,
       sleep: (milliseconds) => {
         waits.push(milliseconds);
@@ -793,15 +793,15 @@ describe("lastfm helpers", () => {
       }),
     ]);
 
-    expect(startTimes).toEqual([0, 200, 400]);
-    expect(waits).toEqual([200, 200]);
+    expect(startTimes).toEqual([0, 1000, 2000]);
+    expect(waits).toEqual([1000, 1000]);
   });
 
   it("allows scheduled requests to overlap in flight", async () => {
     let currentTime = 0;
     const startTimes: number[] = [];
     const completions: string[] = [];
-    const scheduler = createRequestScheduler(200, {
+    const scheduler = createRequestScheduler(1000, {
       now: () => currentTime,
       sleep: (milliseconds) => {
         currentTime += milliseconds;
@@ -828,7 +828,7 @@ describe("lastfm helpers", () => {
 
     await second;
 
-    expect(startTimes).toEqual([0, 200]);
+    expect(startTimes).toEqual([0, 1000]);
     expect(completions).toEqual(["second"]);
 
     resolveFirst?.();
