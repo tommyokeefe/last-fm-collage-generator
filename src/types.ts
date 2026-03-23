@@ -47,6 +47,10 @@ export interface MissingDurationEntry extends AlbumTrack {
   checkedAt: number;
 }
 
+export interface AlbumTrackDurationEntry extends MissingDurationEntry {
+  durationMs: number;
+}
+
 export interface MissingArtworkEntry {
   artist: string;
   album: string;

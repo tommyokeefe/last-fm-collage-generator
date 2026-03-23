@@ -129,7 +129,7 @@ describe("App", () => {
       screen.getByRole("button", { name: "Edit Album A by Artist One" }),
     );
 
-    expect(screen.getByRole("dialog", { name: "Edit album metadata" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Edit album information" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Update artwork on Last.fm" })).toHaveAttribute(
       "href",
       "https://www.last.fm/music/Artist%20One/Album%20A",
@@ -150,7 +150,7 @@ describe("App", () => {
       expect(screen.getByText("Saved edits for Album A (Cached).")).toBeInTheDocument();
     });
 
-    expect(screen.queryByRole("dialog", { name: "Edit album metadata" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Edit album information" })).not.toBeInTheDocument();
     expect(screen.getByText("Album A (Cached)")).toBeInTheDocument();
     expect(screen.getByText("Album B")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Album A (Cached) by Artist One" })).toHaveAttribute(
@@ -180,6 +180,75 @@ describe("App", () => {
       "https://example.com/refreshed.jpg",
     );
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads and saves track durations from the album information modal", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "123" },
+                },
+              ],
+              "@attr": { totalPages: "1" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "180000" } }), { status: 200 }),
+      );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Track information" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Fetched track data for Album A.")).toBeInTheDocument();
+    });
+
+    expect(screen.getByDisplayValue("03:00")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open album on MusicBrainz" })).toHaveAttribute(
+      "href",
+      "https://musicbrainz.org/search?query=Album+A+Artist+One&type=release&method=indexed",
+    );
+
+    fireEvent.change(screen.getByLabelText("Duration for Track 1"), {
+      target: { value: "04:05" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Saved edits for Album A.")).toBeInTheDocument();
+    });
+
+    expect(
+      JSON.parse(window.localStorage.getItem("lastfm-collage-duration-cache") ?? "{}"),
+    ).toMatchObject({
+      "artist one::track 1": {
+        duration: 245000,
+      },
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("toggles to an exact PNG preview", async () => {
@@ -837,7 +906,7 @@ describe("App", () => {
     expect(screen.getByText("Showing the top 1 albums for tommy, ranked by album plays.")).toBeInTheDocument();
   });
 
-  it("shows missing durations and lets users save a local override", async () => {
+  it("shows a unified missing data tab for albums with missing durations", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -872,95 +941,19 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Missing durations (1)" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Missing data (1)" })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Missing durations (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Missing data (1)" }));
+    expect(screen.getByText("Missing track durations")).toBeInTheDocument();
 
-    const musicBrainzLink = screen.getByRole("link", { name: "Update on MusicBrainz" });
-    expect(musicBrainzLink).toHaveAttribute(
-      "href",
-      "https://musicbrainz.org/search?query=Track+1+Artist+One+Album+A&type=recording&method=indexed",
-    );
-
-    fireEvent.change(screen.getByLabelText("Local duration (sec)"), {
-      target: { value: "180" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save local override" }));
-
-    await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Missing durations (1)" })).not.toBeInTheDocument();
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
+    expect(screen.getByRole("dialog", { name: "Edit album information" })).toBeInTheDocument();
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("tries MusicBrainz for missing durations on demand", async () => {
-    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "1" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recordings: [
-              {
-                title: "Track 1",
-                length: 181000,
-                score: "100",
-                releases: [{ title: "Album A" }],
-                "artist-credit": [{ name: "Artist One" }],
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      );
-
-    render(<App />);
-
-    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
-    fireEvent.change(screen.getByLabelText("Last.fm username"), {
-      target: { value: "tommy" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Missing durations (1)" })).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Missing durations (1)" }));
-    fireEvent.click(screen.getByRole("button", { name: "Try fetching from MusicBrainz" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("MusicBrainz resolved 1 missing duration.")).toBeInTheDocument();
-    });
-
-    expect(screen.queryByRole("button", { name: "Missing durations (1)" })).not.toBeInTheDocument();
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-  });
-
-  it("shows MusicBrainz artwork links and lets users save a local image override", async () => {
+  it("shows a unified missing data tab for albums with missing artwork", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
@@ -995,31 +988,14 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Missing artwork (1)" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Missing data (1)" })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Missing artwork (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Missing data (1)" }));
+    expect(screen.getByText("Missing artwork")).toBeInTheDocument();
 
-    const lastFmLink = screen.getByRole("link", { name: "Update artwork on Last.fm" });
-    expect(lastFmLink).toHaveAttribute(
-      "href",
-      "https://www.last.fm/music/Artist%20One/Album%20A",
-    );
-
-    fireEvent.change(screen.getByLabelText("Local image URL"), {
-      target: { value: "https://example.com/override.jpg" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save local override" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Saved a local artwork override for Album A.")).toBeInTheDocument();
-    });
-
-    expect(screen.queryByRole("button", { name: "Missing artwork (1)" })).not.toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Album A by Artist One" })).toHaveAttribute(
-      "src",
-      "https://example.com/override.jpg",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
+    expect(screen.getByRole("dialog", { name: "Edit album information" })).toBeInTheDocument();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

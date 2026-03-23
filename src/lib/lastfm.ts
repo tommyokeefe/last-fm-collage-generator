@@ -1,6 +1,7 @@
 import type {
   AlbumEntry,
   AlbumTrack,
+  AlbumTrackDurationEntry,
   FetchProgressState,
   HydrateListeningTimesResult,
   LastFmAlbumInfoResponse,
@@ -424,6 +425,76 @@ export async function fetchMissingDurationsFromMusicBrainz(
   };
 }
 
+export async function refreshAlbumTrackDurationsFromMusicBrainz(
+  album: AlbumEntry,
+  onStatus?: (message: string) => void,
+  onProgress?: (progress: FetchProgressState) => void,
+): Promise<{ resolvedCount: number }> {
+  syncDurationCacheFromStorage();
+  const tracks = getAlbumTrackDurationEntries(album);
+  let completedRequests = 0;
+  let resolvedCount = 0;
+  const startedAt = Date.now();
+
+  if (tracks.length > 0) {
+    onProgress?.({
+      completed: 0,
+      total: tracks.length,
+      estimatedRemainingMs: 0,
+      unitLabel: "Tracks",
+    });
+  } else {
+    onStatus?.("No tracks are available for this album.");
+  }
+
+  await mapWithConcurrency(tracks, 1, async (track) => {
+    try {
+      const duration = await lookupMusicBrainzTrackDuration(track);
+      if (duration > 0) {
+        durationCache[track.trackKey] = {
+          duration,
+          checkedAt: Date.now(),
+        };
+        resolvedCount += 1;
+      } else if (!durationCache[track.trackKey]) {
+        durationCache[track.trackKey] = {
+          duration: 0,
+          checkedAt: Date.now(),
+        };
+      }
+    } catch (error) {
+      console.warn("MusicBrainz duration refresh failed", track, error);
+      if (!durationCache[track.trackKey]) {
+        durationCache[track.trackKey] = {
+          duration: 0,
+          checkedAt: Date.now(),
+        };
+      }
+    } finally {
+      completedRequests += 1;
+      if (tracks.length > 0) {
+        const elapsedMs = Math.max(Date.now() - startedAt, 0);
+        const averageRequestMs = completedRequests > 0 ? elapsedMs / completedRequests : 0;
+        onProgress?.({
+          completed: completedRequests,
+          total: tracks.length,
+          estimatedRemainingMs: Math.max(tracks.length - completedRequests, 0) * averageRequestMs,
+          unitLabel: "Tracks",
+        });
+        onStatus?.(
+          `Refreshing track durations from MusicBrainz... ${completedRequests}/${tracks.length}`,
+        );
+      }
+    }
+  });
+
+  persistDurationCache(durationCache);
+
+  return {
+    resolvedCount,
+  };
+}
+
 export async function fetchMissingArtworkFromMusicBrainz(
   albums: MissingArtworkEntry[],
   onStatus?: (message: string) => void,
@@ -548,6 +619,25 @@ export function getMissingDurationEntries(albums: AlbumEntry[]): MissingDuration
   return sortMissingDurationEntries([...missingTracks.values()]);
 }
 
+export function getAlbumTrackDurationEntries(album: AlbumEntry): AlbumTrackDurationEntry[] {
+  syncDurationCacheFromStorage();
+
+  return [...album.tracks.entries()]
+    .map(([trackKey, track]) => {
+      const cacheEntry = durationCache[trackKey];
+
+      return {
+        ...track,
+        trackKey,
+        checkedAt: cacheEntry?.checkedAt ?? 0,
+        durationMs: readCachedDuration(cacheEntry),
+      };
+    })
+    .sort((left, right) =>
+      right.plays - left.plays || `${left.name} ${left.artist}`.localeCompare(`${right.name} ${right.artist}`),
+    );
+}
+
 export function getMissingArtworkEntries(albums: AlbumEntry[]): MissingArtworkEntry[] {
   syncArtworkCacheFromStorage();
 
@@ -619,6 +709,15 @@ export function buildMusicBrainzTrackUrl(track: AlbumTrack): string {
   return buildMusicBrainzSearchUrl({
     query: `${track.name} ${track.artist} ${track.album}`,
     type: "recording",
+  });
+}
+
+export function buildMusicBrainzAlbumUrl(
+  album: Pick<MissingArtworkEntry, "artist" | "album">,
+): string {
+  return buildMusicBrainzSearchUrl({
+    query: `${album.album} ${album.artist}`,
+    type: "release",
   });
 }
 

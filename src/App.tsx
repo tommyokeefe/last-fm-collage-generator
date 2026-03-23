@@ -6,24 +6,25 @@ import {
   applyCachedArtwork,
   applyCachedDurations,
   buildLastFmAlbumUrl,
+  buildMusicBrainzAlbumUrl,
   buildMusicBrainzTrackUrl,
   buildTimeRange,
-  fetchMissingArtworkFromMusicBrainz,
-  fetchMissingDurationsFromMusicBrainz,
   fetchRecentTracks,
   formatMetric,
+  getAlbumTrackDurationEntries,
   getMissingArtworkEntries,
   getMissingDurationEntries,
   getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
+  refreshAlbumTrackDurationsFromMusicBrainz,
   refreshAlbumArtwork,
   saveAlbumOverride,
-  saveAlbumArtworkOverride,
   saveTrackDurationOverride,
   sortAlbums,
 } from "./lib/lastfm";
 import type {
   AlbumEntry,
+  AlbumTrackDurationEntry,
   ExportRenderOptions,
   FetchProgressState,
   GridSize,
@@ -38,7 +39,7 @@ import type {
 } from "./types";
 
 const SETTINGS_KEY = "lastfm-collage-settings";
-type PreviewMode = "config" | "export" | "missing-durations" | "missing-artwork";
+type PreviewMode = "config" | "export" | "missing-data";
 const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "7d", label: "Last 7 days" },
   { value: "1m", label: "Last 30 days" },
@@ -87,6 +88,18 @@ interface AlbumEditDraft {
   imageUrl: string;
 }
 
+type AlbumEditTab = "details" | "tracks";
+
+interface AlbumTrackDraft extends AlbumTrackDurationEntry {
+  durationInput: string;
+}
+
+interface MissingDataAlbumEntry {
+  album: AlbumEntry;
+  hasMissingArtwork: boolean;
+  hasMissingDurations: boolean;
+}
+
 function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [status, setStatus] = useState<StatusState>({
@@ -104,11 +117,13 @@ function App() {
   >({});
   const [editingAlbum, setEditingAlbum] = useState<AlbumEntry | null>(null);
   const [albumEditDraft, setAlbumEditDraft] = useState<AlbumEditDraft | null>(null);
+  const [albumEditTab, setAlbumEditTab] = useState<AlbumEditTab>("details");
+  const [albumTrackDrafts, setAlbumTrackDrafts] = useState<AlbumTrackDraft[]>([]);
+  const [isLoadingAlbumTracks, setIsLoadingAlbumTracks] = useState(false);
+  const [isRefreshingAlbumTracks, setIsRefreshingAlbumTracks] = useState(false);
   const [isRefreshingAlbumArtwork, setIsRefreshingAlbumArtwork] = useState(false);
   const [missingArtwork, setMissingArtwork] = useState<MissingArtworkEntry[]>([]);
   const [missingDurations, setMissingDurations] = useState<MissingDurationEntry[]>([]);
-  const [imageOverrides, setImageOverrides] = useState<Record<string, string>>({});
-  const [durationOverrides, setDurationOverrides] = useState<Record<string, string>>({});
   const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
   const [exportPreviewUrl, setExportPreviewUrl] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("config");
@@ -140,6 +155,10 @@ function App() {
     }),
     [settings.rankingMode, settings.timeRange, trimmedUsername],
   );
+  const missingDataAlbums = useMemo(
+    () => buildMissingDataAlbums(generatedResult?.albums ?? [], missingArtwork, missingDurations),
+    [generatedResult?.albums, missingArtwork, missingDurations],
+  );
 
   useEffect(() => {
     if (!generatedResult || !matchesGeneratedQuery(generatedResult, generatedQuery)) {
@@ -154,16 +173,10 @@ function App() {
   }, [columns, generatedQuery, generatedResult, rows]);
 
   useEffect(() => {
-    if (previewMode === "missing-durations" &&
-      (settings.rankingMode !== "listening-time" || missingDurations.length === 0)) {
-      setPreviewMode("config");
-      return;
-    }
-
-    if (previewMode === "missing-artwork" && missingArtwork.length === 0) {
+    if (previewMode === "missing-data" && missingDataAlbums.length === 0) {
       setPreviewMode("config");
     }
-  }, [missingArtwork.length, missingDurations.length, previewMode, settings.rankingMode]);
+  }, [missingDataAlbums.length, previewMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -245,6 +258,143 @@ function App() {
       tone: "info",
       message,
     });
+  }
+
+  function buildAlbumTrackDrafts(album: AlbumEntry): AlbumTrackDraft[] {
+    return getAlbumTrackDurationEntries(album).map((track) => ({
+      ...track,
+      durationInput: formatTrackDurationInput(track.durationMs),
+    }));
+  }
+
+  function syncEditingAlbumState(nextAlbums: AlbumEntry[]) {
+    if (!editingAlbum) {
+      return;
+    }
+
+    const nextEditingAlbum = nextAlbums.find((album) => album.sourceKey === editingAlbum.sourceKey);
+    if (!nextEditingAlbum) {
+      return;
+    }
+
+    setEditingAlbum(nextEditingAlbum);
+    setAlbumTrackDrafts(buildAlbumTrackDrafts(nextEditingAlbum));
+  }
+
+  function syncGeneratedResultAfterDurationChange() {
+    if (!generatedResult) {
+      return;
+    }
+
+    const nextAlbums = [...generatedResult.albums];
+    applyCachedDurations(nextAlbums);
+    const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
+    const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
+    const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
+    const nextGeneratedResult = {
+      ...generatedResult,
+      albums: nextSortedAlbums,
+    };
+    const nextSummary = summary
+      ? {
+          ...summary,
+          durationGaps: nextMissingDurations.length,
+        }
+      : summary;
+
+    setGeneratedResult(nextGeneratedResult);
+    setMissingDurations(nextMissingDurations);
+    setRenderedAlbums(nextRenderedAlbums);
+    setResultsCopy(
+      buildResultsCopy(
+        generatedResult.query.username,
+        generatedResult.query.rankingMode,
+        nextRenderedAlbums.length,
+      ),
+    );
+    setSummary(nextSummary);
+    syncGeneratedResultCache({
+      ...nextGeneratedResult,
+      missingArtwork,
+      missingDurations: nextMissingDurations,
+      summary: nextSummary,
+    });
+    syncEditingAlbumState(nextSortedAlbums);
+  }
+
+  async function ensureAlbumTrackDataLoaded() {
+    const apiKey = getApiKey();
+    if (!editingAlbum || !generatedResult || !apiKey) {
+      return;
+    }
+
+    const currentTrackDrafts = buildAlbumTrackDrafts(editingAlbum);
+    setAlbumTrackDrafts(currentTrackDrafts);
+    if (!currentTrackDrafts.some((track) => track.checkedAt === 0)) {
+      return;
+    }
+
+    setIsLoadingAlbumTracks(true);
+    setStatus({
+      tone: "info",
+      message: `Fetching track durations for ${editingAlbum.album}...`,
+    });
+
+    try {
+      await hydrateApproximateListeningTimes([editingAlbum], apiKey);
+      syncGeneratedResultAfterDurationChange();
+      setStatus({
+        tone: "success",
+        message: `Fetched track data for ${editingAlbum.album}.`,
+      });
+    } catch (error) {
+      console.error(error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Track data lookup failed.",
+      });
+    } finally {
+      setIsLoadingAlbumTracks(false);
+    }
+  }
+
+  async function handleAlbumEditTabChange(nextTab: AlbumEditTab) {
+    setAlbumEditTab(nextTab);
+    if (nextTab === "tracks") {
+      await ensureAlbumTrackDataLoaded();
+    }
+  }
+
+  async function handleAlbumTrackRefresh() {
+    if (!editingAlbum || !generatedResult) {
+      return;
+    }
+
+    setIsRefreshingAlbumTracks(true);
+    setStatus({
+      tone: "info",
+      message: `Refreshing track data for ${editingAlbum.album} from MusicBrainz...`,
+    });
+
+    try {
+      const result = await refreshAlbumTrackDurationsFromMusicBrainz(editingAlbum);
+      syncGeneratedResultAfterDurationChange();
+      setStatus({
+        tone: result.resolvedCount > 0 ? "success" : "info",
+        message:
+          result.resolvedCount > 0
+            ? `Refreshed track data for ${editingAlbum.album} from MusicBrainz.`
+            : `MusicBrainz did not find additional track data for ${editingAlbum.album}.`,
+      });
+    } catch (error) {
+      console.error(error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "MusicBrainz track refresh failed.",
+      });
+    } finally {
+      setIsRefreshingAlbumTracks(false);
+    }
   }
 
   function handleRankingModeChange(nextRankingMode: RankingMode) {
@@ -414,8 +564,6 @@ function App() {
       setGeneratedResult(nextGeneratedResult);
       setMissingArtwork(nextMissingArtwork);
       setMissingDurations(nextMissingDurations);
-      setImageOverrides({});
-      setDurationOverrides({});
       setRenderedAlbums(nextRenderedAlbums);
       setSummary(nextSummary);
       setResultsCopy(buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length));
@@ -487,251 +635,6 @@ function App() {
     }
   }
 
-  async function handleMissingDurationFallbackFetch() {
-    if (!generatedResult || missingDurations.length === 0) {
-      return;
-    }
-
-    setIsBusy(true);
-    setStatus({
-      tone: "info",
-      message: "Trying MusicBrainz for missing track durations...",
-    });
-
-    try {
-      const fallbackResult = await fetchMissingDurationsFromMusicBrainz(
-        missingDurations,
-        (message) =>
-          setStatus((current) => ({
-            tone: "info",
-            message,
-            progress: current.progress,
-          })),
-        (progress) =>
-          setStatus({
-            tone: "info",
-            message: `Trying MusicBrainz for missing track durations... ${progress.completed} of ${progress.total}`,
-            progress,
-          }),
-      );
-      const nextAlbums = [...generatedResult.albums];
-      applyCachedDurations(nextAlbums);
-      const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
-      const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
-      const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
-
-      const nextGeneratedResult = {
-        ...generatedResult,
-        albums: nextSortedAlbums,
-      };
-      const nextSummary = summary
-        ? {
-            ...summary,
-            durationGaps: nextMissingDurations.length,
-          }
-        : summary;
-
-      setGeneratedResult(nextGeneratedResult);
-      setMissingDurations(nextMissingDurations);
-      setRenderedAlbums(nextRenderedAlbums);
-      setSummary(nextSummary);
-      syncGeneratedResultCache({
-        ...nextGeneratedResult,
-        missingArtwork,
-        missingDurations: nextMissingDurations,
-        summary: nextSummary,
-      });
-      setStatus({
-        tone: fallbackResult.resolvedCount > 0 ? "success" : "info",
-        message:
-          fallbackResult.resolvedCount > 0
-            ? `MusicBrainz resolved ${fallbackResult.resolvedCount} missing duration${fallbackResult.resolvedCount === 1 ? "" : "s"}.`
-            : "MusicBrainz did not resolve any additional missing durations.",
-      });
-    } catch (error) {
-      console.error(error);
-      setStatus({
-        tone: "error",
-        message: error instanceof Error ? error.message : "MusicBrainz lookup failed.",
-      });
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function handleMissingArtworkFallbackFetch() {
-    if (!generatedResult || missingArtwork.length === 0) {
-      return;
-    }
-
-    setIsBusy(true);
-    setStatus({
-      tone: "info",
-      message: "Trying MusicBrainz for missing album artwork...",
-    });
-
-    try {
-      const fallbackResult = await fetchMissingArtworkFromMusicBrainz(
-        missingArtwork,
-        (message) =>
-          setStatus((current) => ({
-            tone: "info",
-            message,
-            progress: current.progress,
-          })),
-        (progress) =>
-          setStatus({
-            tone: "info",
-            message: `Trying MusicBrainz for missing album artwork... ${progress.completed} of ${progress.total}`,
-            progress,
-          }),
-      );
-      const nextAlbums = [...generatedResult.albums];
-      applyCachedArtwork(nextAlbums);
-      const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
-      const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
-      const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
-
-      const nextGeneratedResult = {
-        ...generatedResult,
-        albums: nextSortedAlbums,
-      };
-      setGeneratedResult(nextGeneratedResult);
-      setMissingArtwork(nextMissingArtwork);
-      setRenderedAlbums(nextRenderedAlbums);
-      syncGeneratedResultCache({
-        ...nextGeneratedResult,
-        missingArtwork: nextMissingArtwork,
-        missingDurations,
-        summary,
-      });
-      setStatus({
-        tone: fallbackResult.resolvedCount > 0 ? "success" : "info",
-        message:
-          fallbackResult.resolvedCount > 0
-            ? `MusicBrainz resolved ${fallbackResult.resolvedCount} missing cover${fallbackResult.resolvedCount === 1 ? "" : "s"}.`
-            : "MusicBrainz did not resolve any additional missing album artwork.",
-      });
-    } catch (error) {
-      console.error(error);
-      setStatus({
-        tone: "error",
-        message: error instanceof Error ? error.message : "MusicBrainz artwork lookup failed.",
-      });
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  function handleDurationOverrideSave(track: MissingDurationEntry) {
-    const rawValue = durationOverrides[track.trackKey]?.trim() ?? "";
-    const seconds = Number(rawValue);
-    if (!rawValue || !Number.isFinite(seconds) || seconds <= 0) {
-      setStatus({
-        tone: "error",
-        message: `Enter a valid duration in seconds for ${track.name}.`,
-      });
-      return;
-    }
-
-    if (!generatedResult) {
-      return;
-    }
-
-    saveTrackDurationOverride(track, seconds * 1000);
-    const nextAlbums = [...generatedResult.albums];
-    applyCachedDurations(nextAlbums);
-    const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
-    const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
-
-    const nextGeneratedResult = {
-      ...generatedResult,
-      albums: nextSortedAlbums,
-    };
-    const nextSummary = summary
-      ? {
-          ...summary,
-          durationGaps: nextMissingDurations.length,
-        }
-      : summary;
-
-    setGeneratedResult(nextGeneratedResult);
-    setMissingDurations(nextMissingDurations);
-    setDurationOverrides((current) => {
-      const next = { ...current };
-      delete next[track.trackKey];
-      return next;
-    });
-    setSummary(nextSummary);
-    syncGeneratedResultCache({
-      ...nextGeneratedResult,
-      missingArtwork,
-      missingDurations: nextMissingDurations,
-      summary: nextSummary,
-    });
-    setStatus({
-      tone: "success",
-      message: `Saved a local duration override for ${track.name}.`,
-    });
-  }
-
-  function handleArtworkOverrideSave(album: MissingArtworkEntry) {
-    const rawValue = imageOverrides[album.albumKey]?.trim() ?? "";
-    if (!rawValue) {
-      setStatus({
-        tone: "error",
-        message: `Enter a valid image URL for ${album.album}.`,
-      });
-      return;
-    }
-
-    try {
-      const parsedUrl = new URL(rawValue);
-      if (!/^https?:$/.test(parsedUrl.protocol)) {
-        throw new Error("Unsupported protocol");
-      }
-    } catch {
-      setStatus({
-        tone: "error",
-        message: `Enter a valid image URL for ${album.album}.`,
-      });
-      return;
-    }
-
-    if (!generatedResult) {
-      return;
-    }
-
-    saveAlbumArtworkOverride(album, rawValue);
-    const nextAlbums = [...generatedResult.albums];
-    applyCachedArtwork(nextAlbums);
-    const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
-    const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
-
-    const nextGeneratedResult = {
-      ...generatedResult,
-      albums: nextSortedAlbums,
-    };
-    setGeneratedResult(nextGeneratedResult);
-    setMissingArtwork(nextMissingArtwork);
-    setImageOverrides((current) => {
-      const next = { ...current };
-      delete next[album.albumKey];
-      return next;
-    });
-    setRenderedAlbums(nextSortedAlbums.slice(0, rows * columns));
-    syncGeneratedResultCache({
-      ...nextGeneratedResult,
-      missingArtwork: nextMissingArtwork,
-      missingDurations,
-      summary,
-    });
-    setStatus({
-      tone: "success",
-      message: `Saved a local artwork override for ${album.album}.`,
-    });
-  }
-
   function handleAlbumEditOpen(album: AlbumEntry) {
     setEditingAlbum(album);
     setAlbumEditDraft({
@@ -739,11 +642,19 @@ function App() {
       artist: album.artist,
       imageUrl: album.imageUrl,
     });
+    setAlbumEditTab("details");
+    setAlbumTrackDrafts(buildAlbumTrackDrafts(album));
+    setIsLoadingAlbumTracks(false);
+    setIsRefreshingAlbumTracks(false);
   }
 
   function handleAlbumEditClose() {
     setEditingAlbum(null);
     setAlbumEditDraft(null);
+    setAlbumEditTab("details");
+    setAlbumTrackDrafts([]);
+    setIsLoadingAlbumTracks(false);
+    setIsRefreshingAlbumTracks(false);
     setIsRefreshingAlbumArtwork(false);
   }
 
@@ -845,6 +756,20 @@ function App() {
       return;
     }
 
+    for (const track of albumTrackDrafts) {
+      const parsedDuration = parseTrackDurationInput(track.durationInput);
+      if (track.durationInput.trim() && parsedDuration === null) {
+        setStatus({
+          tone: "error",
+          message: `Enter track durations in mm:ss format for ${track.name}.`,
+        });
+        return;
+      }
+
+      if (parsedDuration !== null) {
+        saveTrackDurationOverride(track, parsedDuration);
+      }
+    }
     saveAlbumOverride(editingAlbum, trimmedDraft);
     applyAlbumEditDraft(trimmedDraft);
   }
@@ -1074,24 +999,14 @@ function App() {
               >
                 True PNG preview
               </button>
-              {missingArtwork.length > 0 ? (
+              {missingDataAlbums.length > 0 ? (
                 <button
                   type="button"
-                  className={previewMode === "missing-artwork" ? "is-active" : ""}
-                  onClick={() => setPreviewMode("missing-artwork")}
-                  aria-pressed={previewMode === "missing-artwork"}
+                  className={previewMode === "missing-data" ? "is-active" : ""}
+                  onClick={() => setPreviewMode("missing-data")}
+                  aria-pressed={previewMode === "missing-data"}
                 >
-                  Missing artwork ({missingArtwork.length})
-                </button>
-              ) : null}
-              {settings.rankingMode === "listening-time" && missingDurations.length > 0 ? (
-                <button
-                  type="button"
-                  className={previewMode === "missing-durations" ? "is-active" : ""}
-                  onClick={() => setPreviewMode("missing-durations")}
-                  aria-pressed={previewMode === "missing-durations"}
-                >
-                  Missing durations ({missingDurations.length})
+                  Missing data ({missingDataAlbums.length})
                 </button>
               ) : null}
             </div>
@@ -1105,33 +1020,10 @@ function App() {
               rankingMode={settings.rankingMode}
               showDurationWarnings={settings.rankingMode === "listening-time"}
             />
-          ) : previewMode === "missing-artwork" ? (
-            <MissingArtworkPanel
-              items={missingArtwork}
-              imageOverrides={imageOverrides}
-              isFetchingFallback={isBusy}
-              onImageChange={(albumKey, value) =>
-                setImageOverrides((current) => ({
-                  ...current,
-                  [albumKey]: value,
-                }))
-              }
-              onFetchFallback={() => void handleMissingArtworkFallbackFetch()}
-              onSave={handleArtworkOverrideSave}
-            />
-          ) : previewMode === "missing-durations" ? (
-            <MissingDurationPanel
-              items={missingDurations}
-              durationOverrides={durationOverrides}
-              isFetchingFallback={isBusy}
-              onDurationChange={(trackKey, value) =>
-                setDurationOverrides((current) => ({
-                  ...current,
-                  [trackKey]: value,
-                }))
-              }
-              onFetchFallback={() => void handleMissingDurationFallbackFetch()}
-              onSave={handleDurationOverrideSave}
+          ) : previewMode === "missing-data" ? (
+            <MissingDataPanel
+              items={missingDataAlbums}
+              onOpenAlbum={handleAlbumEditOpen}
             />
           ) : (
             <ExportPreview
@@ -1146,7 +1038,11 @@ function App() {
         <AlbumEditModal
           draft={albumEditDraft}
           album={editingAlbum}
+          activeTab={albumEditTab}
+          trackDrafts={albumTrackDrafts}
+          isLoadingTracks={isLoadingAlbumTracks}
           isRefreshingArtwork={isRefreshingAlbumArtwork}
+          isRefreshingTracks={isRefreshingAlbumTracks}
           onChange={(key, value) =>
             setAlbumEditDraft((current) =>
               current
@@ -1157,8 +1053,22 @@ function App() {
                 : current,
             )
           }
+          onTrackDurationChange={(trackKey, value) =>
+            setAlbumTrackDrafts((current) =>
+              current.map((track) =>
+                track.trackKey === trackKey
+                  ? {
+                      ...track,
+                      durationInput: value,
+                    }
+                  : track,
+              ),
+            )
+          }
           onClose={handleAlbumEditClose}
           onRefreshArtwork={() => void handleAlbumArtworkRefresh()}
+          onRefreshTrackData={() => void handleAlbumTrackRefresh()}
+          onTabChange={(nextTab) => void handleAlbumEditTabChange(nextTab)}
           onSave={handleAlbumEditSave}
         />
       ) : null}
@@ -1217,91 +1127,181 @@ interface SummaryPanelProps {
 
 interface AlbumEditModalProps {
   album: AlbumEntry;
+  activeTab: AlbumEditTab;
   draft: AlbumEditDraft;
+  trackDrafts: AlbumTrackDraft[];
+  isLoadingTracks: boolean;
   isRefreshingArtwork: boolean;
+  isRefreshingTracks: boolean;
   onChange: (key: keyof AlbumEditDraft, value: string) => void;
+  onTrackDurationChange: (trackKey: string, value: string) => void;
   onClose: () => void;
   onRefreshArtwork: () => void;
+  onRefreshTrackData: () => void;
+  onTabChange: (nextTab: AlbumEditTab) => void;
   onSave: () => void;
 }
 
 function AlbumEditModal({
   album,
+  activeTab,
   draft,
+  trackDrafts,
+  isLoadingTracks,
   isRefreshingArtwork,
+  isRefreshingTracks,
   onChange,
+  onTrackDurationChange,
   onClose,
   onRefreshArtwork,
+  onRefreshTrackData,
+  onTabChange,
   onSave,
 }: AlbumEditModalProps) {
   return (
     <div className="modal-backdrop" role="presentation">
-      <div className="modal-shell" role="dialog" aria-modal="true" aria-label="Edit album metadata">
+      <div className="modal-shell" role="dialog" aria-modal="true" aria-label="Edit album information">
         <div className="modal-header">
           <div>
-            <h2>Edit album</h2>
+            <h2>Edit album information</h2>
             <p className="results-copy">
-              Update the current collage entry by changing its image, title, or artist label.
+              Update the current collage entry by changing its image, title, artist label, or track durations.
             </p>
           </div>
           <button type="button" className="modal-close-button" onClick={onClose}>
             Close
           </button>
         </div>
-        <div className="album-edit-layout">
-          <div className="album-edit-preview">
-            {draft.imageUrl ? (
-              <img src={draft.imageUrl} alt={`${draft.album} by ${draft.artist}`} />
-            ) : (
-              <div className="empty-state album-edit-placeholder">
-                <p>No image set.</p>
+        <div className="album-edit-tabs" role="tablist" aria-label="Album edit sections">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "details"}
+            className={activeTab === "details" ? "is-active" : ""}
+            onClick={() => onTabChange("details")}
+          >
+            Image and titles
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "tracks"}
+            className={activeTab === "tracks" ? "is-active" : ""}
+            onClick={() => onTabChange("tracks")}
+          >
+            Track information
+          </button>
+        </div>
+        {activeTab === "details" ? (
+          <div className="album-edit-layout">
+            <div className="album-edit-preview">
+              {draft.imageUrl ? (
+                <img src={draft.imageUrl} alt={`${draft.album} by ${draft.artist}`} />
+              ) : (
+                <div className="empty-state album-edit-placeholder">
+                  <p>No image set.</p>
+                </div>
+              )}
+            </div>
+            <div className="album-edit-fields">
+              <label>
+                <span>Album title</span>
+                <input
+                  type="text"
+                  value={draft.album}
+                  onChange={(event) => onChange("album", event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Artist label</span>
+                <input
+                  type="text"
+                  value={draft.artist}
+                  onChange={(event) => onChange("artist", event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Image URL</span>
+                <input
+                  type="url"
+                  placeholder="https://example.com/cover.jpg"
+                  value={draft.imageUrl}
+                  onChange={(event) => onChange("imageUrl", event.target.value)}
+                />
+              </label>
+              <div className="album-edit-actions">
+                <a
+                  className="secondary-link"
+                  href={buildLastFmAlbumUrl({
+                    artist: album.sourceArtist,
+                    album: album.sourceAlbum,
+                  })}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Update artwork on Last.fm
+                </a>
+                <button type="button" onClick={onRefreshArtwork} disabled={isRefreshingArtwork}>
+                  {isRefreshingArtwork ? "Refreshing image..." : "Refresh image"}
+                </button>
               </div>
-            )}
+            </div>
           </div>
-          <div className="album-edit-fields">
-            <label>
-              <span>Album title</span>
-              <input
-                type="text"
-                value={draft.album}
-                onChange={(event) => onChange("album", event.target.value)}
-              />
-            </label>
-            <label>
-              <span>Artist label</span>
-              <input
-                type="text"
-                value={draft.artist}
-                onChange={(event) => onChange("artist", event.target.value)}
-              />
-            </label>
-            <label>
-              <span>Image URL</span>
-              <input
-                type="url"
-                placeholder="https://example.com/cover.jpg"
-                value={draft.imageUrl}
-                onChange={(event) => onChange("imageUrl", event.target.value)}
-              />
-            </label>
+        ) : (
+          <div className="track-edit-panel">
             <div className="album-edit-actions">
               <a
                 className="secondary-link"
-                href={buildLastFmAlbumUrl({
+                href={buildMusicBrainzAlbumUrl({
                   artist: album.sourceArtist,
                   album: album.sourceAlbum,
                 })}
                 target="_blank"
                 rel="noreferrer"
               >
-                Update artwork on Last.fm
+                Open album on MusicBrainz
               </a>
-              <button type="button" onClick={onRefreshArtwork} disabled={isRefreshingArtwork}>
-                {isRefreshingArtwork ? "Refreshing image..." : "Refresh image"}
+              <button type="button" onClick={onRefreshTrackData} disabled={isRefreshingTracks}>
+                {isRefreshingTracks ? "Refreshing track data..." : "Refresh track data"}
               </button>
             </div>
+            {isLoadingTracks ? (
+              <div className="empty-state album-track-loading">
+                <p>Loading track information...</p>
+              </div>
+            ) : (
+              <div className="track-edit-list">
+                {trackDrafts.map((track) => (
+                  <div key={track.trackKey} className="track-edit-row">
+                    <div className="track-edit-copy">
+                      <strong>{track.name}</strong>
+                      <span>{track.plays === 1 ? "1 play" : `${track.plays} plays`}</span>
+                    </div>
+                    <label className="track-duration-field">
+                      <span>Duration</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        aria-label={`Duration for ${track.name}`}
+                        placeholder="00:00"
+                        value={track.durationInput}
+                        onChange={(event) => onTrackDurationChange(track.trackKey, event.target.value)}
+                      />
+                    </label>
+                    <a
+                      className="secondary-link"
+                      href={buildMusicBrainzTrackUrl(track)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Update on MusicBrainz
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+        )}
         <div className="modal-actions">
           <button type="button" onClick={onClose}>
             Cancel
@@ -1315,148 +1315,59 @@ function AlbumEditModal({
   );
 }
 
-interface MissingArtworkPanelProps {
-  items: MissingArtworkEntry[];
-  imageOverrides: Record<string, string>;
-  isFetchingFallback: boolean;
-  onImageChange: (albumKey: string, value: string) => void;
-  onFetchFallback: () => void;
-  onSave: (album: MissingArtworkEntry) => void;
+interface MissingDataPanelProps {
+  items: MissingDataAlbumEntry[];
+  onOpenAlbum: (album: AlbumEntry) => void;
 }
 
-function MissingArtworkPanel({
-  items,
-  imageOverrides,
-  isFetchingFallback,
-  onImageChange,
-  onFetchFallback,
-  onSave,
-}: MissingArtworkPanelProps) {
+function MissingDataPanel({ items, onOpenAlbum }: MissingDataPanelProps) {
   if (items.length === 0) {
     return (
-      <div className="empty-state missing-artwork-empty">
-        <p>No missing artwork remains.</p>
+      <div className="empty-state missing-data-empty">
+        <p>No missing data remains.</p>
       </div>
     );
   }
 
   return (
-    <div className="missing-artwork-panel">
+    <div className="missing-data-panel">
       <p className="results-copy">
-        These albums are missing cover art from Last.fm. You can try fetching album artwork from
-        MusicBrainz and the Cover Art Archive without regenerating the collage.
+        These albums still have missing artwork or track durations. Open an album to fix the image,
+        titles, and track data in one place.
       </p>
-      <div className="missing-artwork-toolbar">
-        <button type="button" onClick={onFetchFallback} disabled={isFetchingFallback}>
-          {isFetchingFallback ? "Trying MusicBrainz..." : "Try fetching artwork from MusicBrainz"}
-        </button>
-      </div>
-      <div className="missing-artwork-list">
-        {items.map((album) => (
-          <article key={album.albumKey} className="missing-artwork-item">
-            <div className="missing-artwork-copy">
-              <strong>{album.album}</strong>
-              <span>{album.artist}</span>
-            </div>
-            <div className="missing-artwork-actions">
-              <a
-                className="secondary-link"
-                href={buildLastFmAlbumUrl(album)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Update artwork on Last.fm
-              </a>
-              <label className="image-override-field">
-                <span>Local image URL</span>
-                <input
-                  type="url"
-                  placeholder="https://example.com/cover.jpg"
-                  value={imageOverrides[album.albumKey] ?? ""}
-                  onChange={(event) => onImageChange(album.albumKey, event.target.value)}
-                />
-              </label>
-              <button type="button" onClick={() => onSave(album)}>
-                Save local override
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
+      <div className="missing-data-list">
+        {items.map((item) => {
+          const hasVisibleArtwork = Boolean(item.album.imageUrl) && !item.hasMissingArtwork;
 
-interface MissingDurationPanelProps {
-  items: MissingDurationEntry[];
-  durationOverrides: Record<string, string>;
-  isFetchingFallback: boolean;
-  onDurationChange: (trackKey: string, value: string) => void;
-  onFetchFallback: () => void;
-  onSave: (track: MissingDurationEntry) => void;
-}
-
-function MissingDurationPanel({
-  items,
-  durationOverrides,
-  isFetchingFallback,
-  onDurationChange,
-  onFetchFallback,
-  onSave,
-}: MissingDurationPanelProps) {
-  if (items.length === 0) {
-    return (
-      <div className="empty-state missing-duration-empty">
-        <p>No missing durations remain.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="missing-duration-panel">
-      <p className="results-copy">
-        These tracks are missing duration metadata. You can open the track page on Last.fm to fix
-        it globally, or save a local override in seconds for this browser.
-      </p>
-      <div className="missing-duration-toolbar">
-        <button type="button" onClick={onFetchFallback} disabled={isFetchingFallback}>
-          {isFetchingFallback ? "Trying MusicBrainz..." : "Try fetching from MusicBrainz"}
-        </button>
-      </div>
-      <div className="missing-duration-list">
-        {items.map((track) => (
-          <article key={track.trackKey} className="missing-duration-item">
-            <div className="missing-duration-copy">
-              <strong>{track.name}</strong>
-              <span>
-                {track.artist} - {track.album}
-              </span>
-            </div>
-            <div className="missing-duration-actions">
-              <a
-                className="secondary-link"
-                href={buildMusicBrainzTrackUrl(track)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Update on MusicBrainz
-              </a>
-              <label className="duration-override-field">
-                <span>Local duration (sec)</span>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={durationOverrides[track.trackKey] ?? ""}
-                  onChange={(event) => onDurationChange(track.trackKey, event.target.value)}
-                />
-              </label>
-              <button type="button" onClick={() => onSave(track)}>
-                Save local override
-              </button>
-            </div>
-          </article>
-        ))}
+          return (
+            <button
+              key={item.album.sourceKey}
+              type="button"
+              className="missing-data-item"
+              onClick={() => onOpenAlbum(item.album)}
+              aria-label={`Edit ${item.album.album} by ${item.album.artist}`}
+            >
+              <div className={`missing-data-artwork ${hasVisibleArtwork ? "" : "is-placeholder"}`.trim()}>
+                {hasVisibleArtwork ? (
+                  <img src={item.album.imageUrl} alt="" />
+                ) : (
+                  <div className="placeholder-copy">
+                    <strong>{item.album.album}</strong>
+                    <span>{item.album.artist}</span>
+                  </div>
+                )}
+              </div>
+              <div className="missing-data-copy">
+                <strong>{item.album.album}</strong>
+                <span>{item.album.artist}</span>
+                <div className="missing-data-flags">
+                  {item.hasMissingArtwork ? <span>Missing artwork</span> : null}
+                  {item.hasMissingDurations ? <span>Missing track durations</span> : null}
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1668,6 +1579,67 @@ function matchesGeneratedQuery(
 
 function buildGeneratedResultKey(query: GeneratedResultState["query"]): string {
   return `${query.username}::${query.timeRange}::${query.rankingMode}`;
+}
+
+function formatTrackDurationInput(durationMs: number): string {
+  if (durationMs <= 0) {
+    return "";
+  }
+
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function parseTrackDurationInput(value: string): number | null {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const match = trimmedValue.match(/^(\d+):([0-5]\d)$/);
+  if (!match) {
+    return null;
+  }
+
+  const minutes = Number(match[1]);
+  const seconds = Number(match[2]);
+  if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+    return null;
+  }
+
+  return (minutes * 60 + seconds) * 1000;
+}
+
+function buildMissingDataAlbums(
+  albums: AlbumEntry[],
+  missingArtwork: MissingArtworkEntry[],
+  missingDurations: MissingDurationEntry[],
+): MissingDataAlbumEntry[] {
+  const missingArtworkKeys = new Set(missingArtwork.map((album) => album.sourceKey));
+  const missingDurationAlbumKeys = new Set(
+    missingDurations.map((track) => `${track.artist}::${track.album}`.toLowerCase()),
+  );
+
+  return albums.flatMap((album) => {
+    const hasMissingArtwork = missingArtworkKeys.has(album.sourceKey);
+    const hasMissingDurations = [...album.tracks.values()].some((track) =>
+      missingDurationAlbumKeys.has(`${track.artist}::${track.album}`.toLowerCase()),
+    );
+
+    if (!hasMissingArtwork && !hasMissingDurations) {
+      return [];
+    }
+
+    return [
+      {
+        album,
+        hasMissingArtwork,
+        hasMissingDurations,
+      },
+    ];
+  });
 }
 
 function buildResultsCopy(

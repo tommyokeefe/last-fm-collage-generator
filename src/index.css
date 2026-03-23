@@ -320,70 +320,26 @@ button:disabled {
   margin-top: 1.25rem;
 }
 
-.missing-duration-panel {
+.missing-data-panel {
   display: grid;
   gap: 1rem;
   margin-top: 1.25rem;
 }
 
-.missing-artwork-panel {
-  display: grid;
-  gap: 1rem;
-  margin-top: 1.25rem;
-}
-
-.missing-artwork-toolbar,
-.missing-duration-toolbar {
-  display: flex;
-  justify-content: flex-start;
-}
-
-.missing-artwork-toolbar button,
-.missing-duration-toolbar button {
-  width: auto;
-}
-
-.missing-artwork-list,
-.missing-duration-list {
+.missing-data-list {
   display: grid;
   gap: 0.85rem;
 }
 
-.missing-artwork-item,
-.missing-duration-item {
+.missing-data-item {
   display: grid;
-  gap: 1rem;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 0.85rem;
   padding: 1rem;
   border: 1px solid var(--panel-border);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.02);
-}
-
-.missing-duration-copy {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.missing-artwork-copy {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.missing-artwork-item span,
-.missing-duration-copy span {
-  color: var(--text-muted);
-}
-
-.missing-artwork-actions,
-.missing-duration-actions {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(220px, 1fr) auto;
-  gap: 0.75rem;
-  align-items: end;
-}
-
-.missing-artwork-actions button {
-  width: auto;
+  text-align: left;
 }
 
 .secondary-link {
@@ -399,22 +355,50 @@ button:disabled {
   text-decoration: none;
 }
 
-.duration-override-field {
+.missing-data-artwork {
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.missing-data-artwork img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.missing-data-artwork.is-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 0.5rem;
+}
+
+.missing-data-copy {
   display: grid;
   gap: 0.35rem;
 }
 
-.image-override-field {
-  display: grid;
-  gap: 0.35rem;
+.missing-data-copy span {
+  color: var(--text-muted);
 }
 
-.duration-override-field span {
-  font-size: 0.9rem;
+.missing-data-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
-.image-override-field span {
-  font-size: 0.9rem;
+.missing-data-flags span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(124, 156, 255, 0.14);
+  color: #d7e0ff;
+  font-size: 0.78rem;
 }
 
 .empty-state {
@@ -519,18 +503,21 @@ button:disabled {
   inset: 0;
   z-index: 20;
   display: grid;
-  place-items: center;
+  place-items: start center;
   padding: 1rem;
   background: rgba(4, 9, 17, 0.78);
+  overflow-y: auto;
 }
 
 .modal-shell {
   width: min(760px, 100%);
+  max-height: calc(100vh - 2rem);
   border: 1px solid var(--panel-border);
   border-radius: 20px;
   background: var(--panel);
   box-shadow: var(--shadow);
   padding: 1.25rem;
+  overflow-y: auto;
 }
 
 .modal-header,
@@ -559,6 +546,21 @@ button:disabled {
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 1rem;
   margin-top: 1rem;
+}
+
+.album-edit-tabs {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.album-edit-tabs button {
+  width: auto;
+}
+
+.album-edit-tabs .is-active {
+  border-color: var(--accent);
+  background: rgba(124, 156, 255, 0.18);
 }
 
 .album-edit-preview {
@@ -601,6 +603,51 @@ button:disabled {
   width: auto;
 }
 
+.track-edit-panel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.track-edit-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.track-edit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: end;
+  padding: 0.85rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.track-edit-copy {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.track-edit-copy span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.track-duration-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.track-duration-field input {
+  width: 7rem;
+}
+
+.album-track-loading {
+  min-height: 180px;
+}
+
 .export-preview-shell {
   display: grid;
   place-items: center;
@@ -638,6 +685,15 @@ button:disabled {
   }
 
   .album-edit-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .track-edit-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .missing-data-item {
     grid-template-columns: 1fr;
   }
 }

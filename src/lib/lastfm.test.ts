@@ -2,6 +2,7 @@ import {
   aggregateAlbums,
   applyCachedAlbumOverrides,
   applyCachedArtwork,
+  buildMusicBrainzAlbumUrl,
   buildLastFmAlbumUrl,
   buildTimeRange,
   buildMusicBrainzTrackUrl,
@@ -10,9 +11,11 @@ import {
   fetchMissingDurationsFromMusicBrainz,
   fetchRecentTracks,
   formatMetric,
+  getAlbumTrackDurationEntries,
   getMissingArtworkEntries,
   getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
+  refreshAlbumTrackDurationsFromMusicBrainz,
   refreshAlbumArtwork,
   saveAlbumOverride,
   saveAlbumArtworkOverride,
@@ -307,6 +310,77 @@ describe("lastfm helpers", () => {
     fetchSpy.mockRestore();
   });
 
+  it("lists album track durations from the cache", () => {
+    window.localStorage.setItem(
+      "lastfm-collage-duration-cache",
+      JSON.stringify({
+        "artist one::track 1": {
+          duration: 181000,
+          checkedAt: 1000,
+        },
+      }),
+    );
+
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    expect(getAlbumTrackDurationEntries(albums[0] as AlbumEntry)).toEqual([
+      expect.objectContaining({
+        name: "Track 1",
+        durationMs: 181000,
+        checkedAt: 1000,
+      }),
+    ]);
+  });
+
+  it("refreshes album track durations from MusicBrainz", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          recordings: [
+            {
+              title: "Track 1",
+              length: 181000,
+              score: "100",
+              releases: [{ title: "Album A" }],
+              "artist-credit": [{ name: "Artist One" }],
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    const result = await refreshAlbumTrackDurationsFromMusicBrainz(albums[0] as AlbumEntry);
+
+    expect(result.resolvedCount).toBe(1);
+    expect(getAlbumTrackDurationEntries(albums[0] as AlbumEntry)[0]?.durationMs).toBe(181000);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining("musicbrainz.org/ws/2/recording"),
+      expect.objectContaining({
+        headers: {
+          Accept: "application/json",
+        },
+      }),
+    );
+  });
+
   it("tries MusicBrainz for unresolved missing artwork", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -407,6 +481,14 @@ describe("lastfm helpers", () => {
       }),
     ).toBe(
       "https://www.last.fm/music/Artist%20One/Album%20A",
+    );
+    expect(
+      buildMusicBrainzAlbumUrl({
+        artist: "Artist One",
+        album: "Album A",
+      }),
+    ).toBe(
+      "https://musicbrainz.org/search?query=Album+A+Artist+One&type=release&method=indexed",
     );
   });
 
