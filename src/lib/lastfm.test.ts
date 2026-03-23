@@ -166,6 +166,34 @@ describe("lastfm helpers", () => {
     fetchSpy.mockRestore();
   });
 
+  it("reuses legacy cached durations without checkedAt metadata", async () => {
+    window.localStorage.setItem(
+      "lastfm-collage-duration-cache",
+      JSON.stringify({
+        "artist one::track 1": {
+          duration: 180000,
+        },
+      }),
+    );
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    await hydrateApproximateListeningTimes(albums, "test-key");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(albums[0]?.approximateListeningMs).toBe(180000);
+    fetchSpy.mockRestore();
+  });
+
   it("retries missing durations after one hour", async () => {
     vi.spyOn(Date, "now").mockReturnValue(4_000_000);
     window.localStorage.setItem(

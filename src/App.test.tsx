@@ -283,6 +283,167 @@ describe("App", () => {
     });
   });
 
+  it("asks the user to generate when switching to listening time without cached results", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                date: { uts: "123" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
+
+    expect(
+      screen.getByText(
+        "Generate the collage in approximate listening time mode to view those rankings.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export PNG" })).toBeDisabled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses cached generated results when switching ranking modes for the same time range", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const recentTracksResponse = new Response(
+      JSON.stringify({
+        recenttracks: {
+          track: [
+            {
+              artist: { name: "Artist One" },
+              album: { "#text": "Album A" },
+              name: "Track 1",
+              image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+              date: { uts: "123" },
+            },
+            {
+              artist: { name: "Artist One" },
+              album: { "#text": "Album A" },
+              name: "Track 1",
+              image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+              date: { uts: "124" },
+            },
+            {
+              artist: { name: "Artist Two" },
+              album: { "#text": "Album B" },
+              name: "Track 2",
+              image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
+              date: { uts: "125" },
+            },
+          ],
+          "@attr": { totalPages: "1" },
+        },
+      }),
+      { status: 200 },
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(recentTracksResponse.clone())
+      .mockResolvedValueOnce(recentTracksResponse.clone())
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "100000" } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ track: { duration: "300000" } }), { status: 200 }),
+      );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing the top 2 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Generate the collage in approximate listening time mode to view those rankings.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Showing the top 2 albums for tommy, ranked by approximate listening time."),
+      ).toBeInTheDocument();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+
+    fireEvent.click(screen.getByLabelText("Most plays per album"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing the cached album-plays collage.")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Showing the top 2 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "True PNG preview" }));
+
+    await waitFor(() => {
+      expect(vi.mocked(renderExportBlob)).toHaveBeenLastCalledWith(
+        expect.any(Array),
+        4,
+        4,
+        "plays",
+        {
+          showAlbumInfo: true,
+          showMetric: true,
+        },
+      );
+    });
+
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Showing the cached approximate listening-time collage.")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(vi.mocked(renderExportBlob)).toHaveBeenLastCalledWith(
+        expect.any(Array),
+        4,
+        4,
+        "listening-time",
+        {
+          showAlbumInfo: true,
+          showMetric: true,
+        },
+      );
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+  });
+
   it("shows fetch progress and an ETA while loading multiple pages", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     let now = 0;

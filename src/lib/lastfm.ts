@@ -1265,13 +1265,28 @@ function normalizeDurationCacheEntry(value: unknown): DurationCacheEntry | null 
   }
 
   const entry = value as Partial<DurationCacheEntry>;
-  if (typeof entry.duration !== "number" || typeof entry.checkedAt !== "number") {
+  const duration =
+    typeof entry.duration === "number"
+      ? entry.duration
+      : typeof entry.duration === "string"
+        ? Number(entry.duration)
+        : Number.NaN;
+  const checkedAt =
+    typeof entry.checkedAt === "number"
+      ? entry.checkedAt
+      : typeof entry.checkedAt === "string"
+        ? Number(entry.checkedAt)
+        : duration > 0
+          ? Date.now()
+          : 0;
+
+  if (!Number.isFinite(duration) || !Number.isFinite(checkedAt)) {
     return null;
   }
 
   return {
-    duration: Number.isFinite(entry.duration) ? entry.duration : 0,
-    checkedAt: Number.isFinite(entry.checkedAt) ? entry.checkedAt : 0,
+    duration,
+    checkedAt,
   };
 }
 

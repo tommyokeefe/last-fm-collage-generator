@@ -75,6 +75,12 @@ interface GeneratedResultState {
   albums: AlbumEntry[];
 }
 
+interface CachedGeneratedResultState extends GeneratedResultState {
+  missingArtwork: MissingArtworkEntry[];
+  missingDurations: MissingDurationEntry[];
+  summary: SummaryState | null;
+}
+
 interface AlbumEditDraft {
   album: string;
   artist: string;
@@ -93,6 +99,9 @@ function App() {
   const [summary, setSummary] = useState<SummaryState | null>(null);
   const [renderedAlbums, setRenderedAlbums] = useState<AlbumEntry[]>([]);
   const [generatedResult, setGeneratedResult] = useState<GeneratedResultState | null>(null);
+  const [generatedResultCache, setGeneratedResultCache] = useState<
+    Record<string, CachedGeneratedResultState>
+  >({});
   const [editingAlbum, setEditingAlbum] = useState<AlbumEntry | null>(null);
   const [albumEditDraft, setAlbumEditDraft] = useState<AlbumEditDraft | null>(null);
   const [isRefreshingAlbumArtwork, setIsRefreshingAlbumArtwork] = useState(false);
@@ -201,6 +210,88 @@ function App() {
 
   const canExport = !isBusy && renderedAlbums.length > 0;
 
+  function syncGeneratedResultCache(nextState: CachedGeneratedResultState) {
+    setGeneratedResultCache((current) => ({
+      ...current,
+      [buildGeneratedResultKey(nextState.query)]: nextState,
+    }));
+  }
+
+  function applyGeneratedResultState(nextState: CachedGeneratedResultState) {
+    const nextRenderedAlbums = nextState.albums.slice(0, rows * columns);
+    setGeneratedResult({
+      query: nextState.query,
+      albums: nextState.albums,
+    });
+    setMissingArtwork(nextState.missingArtwork);
+    setMissingDurations(nextState.missingDurations);
+    setSummary(nextState.summary);
+    setRenderedAlbums(nextRenderedAlbums);
+    setResultsCopy(
+      buildResultsCopy(nextState.query.username, nextState.query.rankingMode, nextRenderedAlbums.length),
+    );
+  }
+
+  function clearGeneratedResultView(message: string) {
+    setGeneratedResult(null);
+    setMissingArtwork([]);
+    setMissingDurations([]);
+    setRenderedAlbums([]);
+    setNextExportPreview(null);
+    setSummary(null);
+    setResultsCopy("Your collage will appear here after generation.");
+    setPreviewMode("config");
+    setStatus({
+      tone: "info",
+      message,
+    });
+  }
+
+  function handleRankingModeChange(nextRankingMode: RankingMode) {
+    if (nextRankingMode === settings.rankingMode) {
+      return;
+    }
+
+    const nextQuery = {
+      username: trimmedUsername,
+      timeRange: settings.timeRange,
+      rankingMode: nextRankingMode,
+    };
+    const cachedResult = generatedResultCache[buildGeneratedResultKey(nextQuery)];
+
+    setSettings((current) => ({
+      ...current,
+      rankingMode: nextRankingMode,
+    }));
+
+    if (cachedResult) {
+      applyGeneratedResultState(cachedResult);
+      setStatus({
+        tone: "success",
+        message:
+          nextRankingMode === "plays"
+            ? "Showing the cached album-plays collage."
+            : "Showing the cached approximate listening-time collage.",
+      });
+      return;
+    }
+
+    const hasGeneratedForSameRange = Object.values(generatedResultCache).some(
+      (result) =>
+        result.query.username === nextQuery.username && result.query.timeRange === nextQuery.timeRange,
+    );
+
+    if (!hasGeneratedForSameRange) {
+      return;
+    }
+
+    clearGeneratedResultView(
+      nextRankingMode === "listening-time"
+        ? "Generate the collage in approximate listening time mode to view those rankings."
+        : "Generate the collage in album plays mode to view those rankings.",
+    );
+  }
+
   async function handleGenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -306,26 +397,34 @@ function App() {
       const sorted = sortAlbums(aggregated, settings.rankingMode);
       const nextRenderedAlbums = sorted.slice(0, rows * columns);
 
-      setGeneratedResult({
+      const nextGeneratedResult = {
         query: {
           username: trimmedUsername,
           timeRange: settings.timeRange,
           rankingMode: settings.rankingMode,
         },
         albums: sorted,
-      });
+      };
+      const nextSummary = {
+        scrobbles: recentTracks.items.length,
+        albums: aggregated.length,
+        pages: recentTracks.pagesFetched,
+        durationGaps: nextMissingDurations.length,
+      };
+      setGeneratedResult(nextGeneratedResult);
       setMissingArtwork(nextMissingArtwork);
       setMissingDurations(nextMissingDurations);
       setImageOverrides({});
       setDurationOverrides({});
       setRenderedAlbums(nextRenderedAlbums);
-      setSummary({
-        scrobbles: recentTracks.items.length,
-        albums: aggregated.length,
-        pages: recentTracks.pagesFetched,
-        durationGaps: nextMissingDurations.length,
-      });
+      setSummary(nextSummary);
       setResultsCopy(buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length));
+      syncGeneratedResultCache({
+        ...nextGeneratedResult,
+        missingArtwork: nextMissingArtwork,
+        missingDurations: nextMissingDurations,
+        summary: nextSummary,
+      });
       setStatus({
         tone: "success",
         message: "Collage generated successfully.",
@@ -421,20 +520,27 @@ function App() {
       const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
       const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
 
-      setGeneratedResult({
+      const nextGeneratedResult = {
         ...generatedResult,
         albums: nextSortedAlbums,
-      });
+      };
+      const nextSummary = summary
+        ? {
+            ...summary,
+            durationGaps: nextMissingDurations.length,
+          }
+        : summary;
+
+      setGeneratedResult(nextGeneratedResult);
       setMissingDurations(nextMissingDurations);
       setRenderedAlbums(nextRenderedAlbums);
-      setSummary((current) =>
-        current
-          ? {
-              ...current,
-              durationGaps: nextMissingDurations.length,
-            }
-          : current,
-      );
+      setSummary(nextSummary);
+      syncGeneratedResultCache({
+        ...nextGeneratedResult,
+        missingArtwork,
+        missingDurations: nextMissingDurations,
+        summary: nextSummary,
+      });
       setStatus({
         tone: fallbackResult.resolvedCount > 0 ? "success" : "info",
         message:
@@ -486,12 +592,19 @@ function App() {
       const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
       const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
 
-      setGeneratedResult({
+      const nextGeneratedResult = {
         ...generatedResult,
         albums: nextSortedAlbums,
-      });
+      };
+      setGeneratedResult(nextGeneratedResult);
       setMissingArtwork(nextMissingArtwork);
       setRenderedAlbums(nextRenderedAlbums);
+      syncGeneratedResultCache({
+        ...nextGeneratedResult,
+        missingArtwork: nextMissingArtwork,
+        missingDurations,
+        summary,
+      });
       setStatus({
         tone: fallbackResult.resolvedCount > 0 ? "success" : "info",
         message:
@@ -531,24 +644,31 @@ function App() {
     const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
     const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
 
-    setGeneratedResult({
+    const nextGeneratedResult = {
       ...generatedResult,
       albums: nextSortedAlbums,
-    });
+    };
+    const nextSummary = summary
+      ? {
+          ...summary,
+          durationGaps: nextMissingDurations.length,
+        }
+      : summary;
+
+    setGeneratedResult(nextGeneratedResult);
     setMissingDurations(nextMissingDurations);
     setDurationOverrides((current) => {
       const next = { ...current };
       delete next[track.trackKey];
       return next;
     });
-    setSummary((current) =>
-      current
-        ? {
-            ...current,
-            durationGaps: nextMissingDurations.length,
-          }
-        : current,
-    );
+    setSummary(nextSummary);
+    syncGeneratedResultCache({
+      ...nextGeneratedResult,
+      missingArtwork,
+      missingDurations: nextMissingDurations,
+      summary: nextSummary,
+    });
     setStatus({
       tone: "success",
       message: `Saved a local duration override for ${track.name}.`,
@@ -588,10 +708,11 @@ function App() {
     const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
     const nextMissingArtwork = getMissingArtworkEntries(nextSortedAlbums);
 
-    setGeneratedResult({
+    const nextGeneratedResult = {
       ...generatedResult,
       albums: nextSortedAlbums,
-    });
+    };
+    setGeneratedResult(nextGeneratedResult);
     setMissingArtwork(nextMissingArtwork);
     setImageOverrides((current) => {
       const next = { ...current };
@@ -599,6 +720,12 @@ function App() {
       return next;
     });
     setRenderedAlbums(nextSortedAlbums.slice(0, rows * columns));
+    syncGeneratedResultCache({
+      ...nextGeneratedResult,
+      missingArtwork: nextMissingArtwork,
+      missingDurations,
+      summary,
+    });
     setStatus({
       tone: "success",
       message: `Saved a local artwork override for ${album.album}.`,
@@ -677,10 +804,19 @@ function App() {
     const nextMissingDurations = getMissingDurationEntries(nextSortedAlbums);
     const nextRenderedAlbums = nextSortedAlbums.slice(0, rows * columns);
 
-    setGeneratedResult({
+    const nextGeneratedResult = {
       ...generatedResult,
       albums: nextSortedAlbums,
-    });
+    };
+    const nextSummary = summary
+      ? {
+          ...summary,
+          albums: nextSortedAlbums.length,
+          durationGaps: nextMissingDurations.length,
+        }
+      : summary;
+
+    setGeneratedResult(nextGeneratedResult);
     setMissingArtwork(nextMissingArtwork);
     setMissingDurations(nextMissingDurations);
     setRenderedAlbums(nextRenderedAlbums);
@@ -689,15 +825,13 @@ function App() {
         ? buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length)
         : "No albums remain in the collage.",
     );
-    setSummary((current) =>
-      current
-        ? {
-            ...current,
-            albums: nextSortedAlbums.length,
-            durationGaps: nextMissingDurations.length,
-          }
-        : current,
-    );
+    setSummary(nextSummary);
+    syncGeneratedResultCache({
+      ...nextGeneratedResult,
+      missingArtwork: nextMissingArtwork,
+      missingDurations: nextMissingDurations,
+      summary: nextSummary,
+    });
     setStatus({
       tone: "success",
       message: `Saved edits for ${trimmedDraft.album}.`,
@@ -862,12 +996,7 @@ function App() {
                   name="rankingMode"
                   value="plays"
                   checked={settings.rankingMode === "plays"}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      rankingMode: event.target.value as RankingMode,
-                    }))
-                  }
+                  onChange={(event) => handleRankingModeChange(event.target.value as RankingMode)}
                   disabled={isBusy}
                 />
                 <span>Most plays per album</span>
@@ -878,12 +1007,7 @@ function App() {
                   name="rankingMode"
                   value="listening-time"
                   checked={settings.rankingMode === "listening-time"}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      rankingMode: event.target.value as RankingMode,
-                    }))
-                  }
+                  onChange={(event) => handleRankingModeChange(event.target.value as RankingMode)}
                   disabled={isBusy}
                 />
                 <span>Approximate listening time per album</span>
@@ -1555,6 +1679,10 @@ function matchesGeneratedQuery(
     generatedResult.query.timeRange === query.timeRange &&
     generatedResult.query.rankingMode === query.rankingMode
   );
+}
+
+function buildGeneratedResultKey(query: GeneratedResultState["query"]): string {
+  return `${query.username}::${query.timeRange}::${query.rankingMode}`;
 }
 
 function buildResultsCopy(
