@@ -75,36 +75,46 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Export PNG" })).toBeEnabled();
   });
 
-  it("opens the album editor and saves metadata changes without refetching", async () => {
+  it("refreshes album artwork and saves modal edits to the local cache", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-              {
-                artist: { name: "Artist Two" },
-                album: { "#text": "Album B" },
-                name: "Track 2",
-                image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
-                date: { uts: "456" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
-        { status: 200 },
-      ),
+    const recentTracksResponse = new Response(
+      JSON.stringify({
+        recenttracks: {
+          track: [
+            {
+              artist: { name: "Artist One" },
+              album: { "#text": "Album A" },
+              name: "Track 1",
+              image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+              date: { uts: "123" },
+            },
+            {
+              artist: { name: "Artist Two" },
+              album: { "#text": "Album B" },
+              name: "Track 2",
+              image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
+              date: { uts: "456" },
+            },
+          ],
+          "@attr": { totalPages: "1" },
+        },
+      }),
+      { status: 200 },
     );
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(recentTracksResponse.clone())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            album: {
+              image: [{ "#text": "" }, { "#text": "https://example.com/refreshed.jpg" }],
+            },
+          }),
+          { status: 200 },
+        ),
+      );
 
-    render(<App />);
+    const { unmount } = render(<App />);
 
     fireEvent.change(screen.getByLabelText("Last.fm username"), {
       target: { value: "tommy" },
@@ -120,26 +130,55 @@ describe("App", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "Edit album metadata" })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Album title"), {
-      target: { value: "Album A (Edited)" },
-    });
-    fireEvent.change(screen.getByLabelText("Image URL"), {
-      target: { value: "https://example.com/edited.jpg" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.getByRole("link", { name: "Update artwork on Last.fm" })).toHaveAttribute(
+      "href",
+      "https://www.last.fm/music/Artist%20One/Album%20A",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh image" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Saved edits for Album A (Edited).")).toBeInTheDocument();
+      expect(screen.getByText("Refreshed artwork for Album A.")).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("Image URL")).toHaveValue("https://example.com/refreshed.jpg");
+
+    fireEvent.change(screen.getByLabelText("Album title"), {
+      target: { value: "Album A (Cached)" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add changes to local cache" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Saved edits for Album A (Cached).")).toBeInTheDocument();
     });
 
     expect(screen.queryByRole("dialog", { name: "Edit album metadata" })).not.toBeInTheDocument();
-    expect(screen.getByText("Album A (Edited)")).toBeInTheDocument();
+    expect(screen.getByText("Album A (Cached)")).toBeInTheDocument();
     expect(screen.getByText("Album B")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Album A (Edited) by Artist One" })).toHaveAttribute(
+    expect(screen.getByRole("img", { name: "Album A (Cached) by Artist One" })).toHaveAttribute(
       "src",
-      "https://example.com/edited.jpg",
+      "https://example.com/refreshed.jpg",
     );
     expect(screen.getByText("Showing the top 2 albums for tommy, ranked by album plays.")).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    unmount();
+
+    fetchSpy.mockReset();
+    fetchSpy.mockResolvedValueOnce(recentTracksResponse.clone());
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Album A (Cached)")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("img", { name: "Album A (Cached) by Artist One" })).toHaveAttribute(
+      "src",
+      "https://example.com/refreshed.jpg",
+    );
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -351,7 +390,7 @@ describe("App", () => {
         new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
       );
 
-    render(<App />);
+    const { container } = render(<App />);
 
     fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
     fireEvent.change(screen.getByLabelText("Last.fm username"), {
@@ -363,8 +402,7 @@ describe("App", () => {
       expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("! Artwork missing")).toBeInTheDocument();
-    expect(screen.getByText("! Duration gaps")).toBeInTheDocument();
+    expect(container.querySelector(".tile-warning-icon")).toBeInTheDocument();
   });
 
   it("shows a two-step progress flow for listening-time mode", async () => {

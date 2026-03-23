@@ -1,5 +1,6 @@
 import {
   aggregateAlbums,
+  applyCachedAlbumOverrides,
   applyCachedArtwork,
   buildLastFmAlbumUrl,
   buildTimeRange,
@@ -8,10 +9,12 @@ import {
   fetchMissingArtworkFromMusicBrainz,
   fetchMissingDurationsFromMusicBrainz,
   fetchRecentTracks,
-  getMissingArtworkEntries,
   formatMetric,
+  getMissingArtworkEntries,
   getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
+  refreshAlbumArtwork,
+  saveAlbumOverride,
   saveAlbumArtworkOverride,
   sortAlbums,
 } from "./lastfm";
@@ -351,6 +354,9 @@ describe("lastfm helpers", () => {
         artist: "Artist One",
         album: "Album A",
         albumKey: "artist one::album a",
+        sourceArtist: "Artist One",
+        sourceAlbum: "Album A",
+        sourceKey: "artist one::album a",
       },
     ]);
   });
@@ -405,6 +411,112 @@ describe("lastfm helpers", () => {
         imageUrl: "https://example.com/override.jpg",
       },
     });
+  });
+
+  it("persists album metadata overrides and reapplies them by source key", () => {
+    const albums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    saveAlbumOverride(albums[0] as AlbumEntry, {
+      album: "Album A (Cached)",
+      artist: "Artist One",
+      imageUrl: "https://example.com/cached.jpg",
+    });
+
+    const regeneratedAlbums = aggregateAlbums([
+      {
+        artist: { name: "Artist One" },
+        album: { "#text": "Album A" },
+        name: "Track 1",
+        image: [{ "#text": "https://example.com/a.jpg" }],
+        date: { uts: "123" },
+      },
+    ]);
+
+    applyCachedAlbumOverrides(regeneratedAlbums);
+
+    expect(regeneratedAlbums[0]).toMatchObject({
+      album: "Album A (Cached)",
+      artist: "Artist One",
+      imageUrl: "https://example.com/cached.jpg",
+    });
+  });
+
+  it("refreshes artwork from Last.fm before falling back to MusicBrainz", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            album: {
+              image: [{ "#text": "" }, { "#text": "https://example.com/from-lastfm.jpg" }],
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+
+    const imageUrl = await refreshAlbumArtwork(
+      {
+        sourceArtist: "Artist One",
+        sourceAlbum: "Album A",
+      },
+      "test-key",
+    );
+
+    expect(imageUrl).toBe("https://example.com/from-lastfm.jpg");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    fetchSpy.mockReset();
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            album: {
+              image: [
+                {
+                  "#text":
+                    "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            releases: [
+              {
+                id: "release-123",
+                title: "Album A",
+                score: "100",
+                "cover-art-archive": { front: true },
+                "artist-credit": [{ name: "Artist One" }],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+    const fallbackImageUrl = await refreshAlbumArtwork(
+      {
+        sourceArtist: "Artist One",
+        sourceAlbum: "Album A",
+      },
+      "test-key",
+    );
+
+    expect(fallbackImageUrl).toBe("https://coverartarchive.org/release/release-123/front");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("resumes recent track fetching from the last successful page", async () => {
@@ -502,6 +614,9 @@ describe("lastfm helpers", () => {
         imageUrl: "",
         playCount: 4,
         approximateListeningMs: 2000,
+        sourceArtist: "Artist One",
+        sourceAlbum: "Album A",
+        sourceKey: "artist one::album a",
         tracks: new Map(),
       },
       {
@@ -511,6 +626,9 @@ describe("lastfm helpers", () => {
         imageUrl: "",
         playCount: 2,
         approximateListeningMs: 4000,
+        sourceArtist: "Artist Two",
+        sourceAlbum: "Album B",
+        sourceKey: "artist two::album b",
         tracks: new Map(),
       },
     ];
@@ -528,6 +646,9 @@ describe("lastfm helpers", () => {
       imageUrl: "",
       playCount: 12,
       approximateListeningMs: 0,
+      sourceArtist: "Artist",
+      sourceAlbum: "Album",
+      sourceKey: "artist::album",
       tracks: new Map(),
     };
 

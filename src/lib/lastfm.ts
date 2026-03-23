@@ -3,6 +3,7 @@ import type {
   AlbumTrack,
   FetchProgressState,
   HydrateListeningTimesResult,
+  LastFmAlbumInfoResponse,
   LastFmErrorResponse,
   LastFmImage,
   MissingArtworkEntry,
@@ -27,6 +28,7 @@ const LASTFM_PLACEHOLDER_IMAGE_MARKERS = [
   "2a96cbd8b46e442fc41c2b86b821562f",
   "/default_album_",
 ];
+const ALBUM_OVERRIDE_CACHE_KEY = "lastfm-collage-album-override-cache";
 const DURATION_CACHE_KEY = "lastfm-collage-duration-cache";
 const ARTWORK_CACHE_KEY = "lastfm-collage-artwork-cache";
 const RECENT_TRACKS_CHECKPOINT_KEY = "lastfm-collage-recent-tracks-checkpoint";
@@ -42,6 +44,7 @@ const DAYS_BY_RANGE: Record<Exclude<TimeRangeValue, "overall">, number> = {
 };
 
 const durationCache = loadDurationCache();
+const albumOverrideCache = loadAlbumOverrideCache();
 const artworkCache = loadArtworkCache();
 const lastFmRequestScheduler = createRequestScheduler(
   import.meta.env.MODE === "test" ? 0 : LASTFM_MIN_REQUEST_INTERVAL_MS,
@@ -56,6 +59,13 @@ interface DurationCacheEntry {
 }
 
 interface ArtworkCacheEntry {
+  imageUrl: string;
+  checkedAt: number;
+}
+
+interface AlbumOverrideCacheEntry {
+  album: string;
+  artist: string;
   imageUrl: string;
   checkedAt: number;
 }
@@ -231,6 +241,9 @@ export function aggregateAlbums(scrobbles: LastFmRecentTrack[]): AlbumEntry[] {
         imageUrl,
         playCount: 0,
         approximateListeningMs: 0,
+        sourceArtist: artist,
+        sourceAlbum: album,
+        sourceKey: buildAlbumKey(artist, album),
         tracks: new Map<string, AlbumTrack>(),
       });
     }
@@ -486,6 +499,7 @@ export function applyCachedDurations(albums: AlbumEntry[]): void {
 }
 
 export function applyCachedArtwork(albums: AlbumEntry[]): void {
+  applyCachedAlbumOverrides(albums);
   syncArtworkCacheFromStorage();
 
   for (const album of albums) {
@@ -493,6 +507,22 @@ export function applyCachedArtwork(albums: AlbumEntry[]): void {
     if (cachedImageUrl) {
       album.imageUrl = cachedImageUrl;
     }
+  }
+}
+
+export function applyCachedAlbumOverrides(albums: AlbumEntry[]): void {
+  syncAlbumOverrideCacheFromStorage();
+
+  for (const album of albums) {
+    const cacheEntry = albumOverrideCache[album.sourceKey];
+    if (!cacheEntry) {
+      continue;
+    }
+
+    album.album = cacheEntry.album;
+    album.artist = cacheEntry.artist;
+    album.artistNames = new Set([cacheEntry.artist]);
+    album.imageUrl = cacheEntry.imageUrl;
   }
 }
 
@@ -539,6 +569,9 @@ export function getMissingArtworkEntries(albums: AlbumEntry[]): MissingArtworkEn
           artist: album.artist,
           album: album.album,
           albumKey,
+          sourceArtist: album.sourceArtist,
+          sourceAlbum: album.sourceAlbum,
+          sourceKey: album.sourceKey,
         },
       ];
     }),
@@ -565,6 +598,23 @@ export function saveAlbumArtworkOverride(
   persistArtworkCache(artworkCache);
 }
 
+export function saveAlbumOverride(
+  album: Pick<AlbumEntry, "sourceKey">,
+  override: {
+    album: string;
+    artist: string;
+    imageUrl: string;
+  },
+): void {
+  albumOverrideCache[album.sourceKey] = {
+    album: override.album.trim(),
+    artist: override.artist.trim(),
+    imageUrl: override.imageUrl.trim(),
+    checkedAt: Date.now(),
+  };
+  persistAlbumOverrideCache(albumOverrideCache);
+}
+
 export function buildMusicBrainzTrackUrl(track: AlbumTrack): string {
   return buildMusicBrainzSearchUrl({
     query: `${track.name} ${track.artist} ${track.album}`,
@@ -574,6 +624,26 @@ export function buildMusicBrainzTrackUrl(track: AlbumTrack): string {
 
 export function buildLastFmAlbumUrl(album: Pick<MissingArtworkEntry, "artist" | "album">): string {
   return `https://www.last.fm/music/${encodeURIComponent(album.artist)}/${encodeURIComponent(album.album)}`;
+}
+
+export async function refreshAlbumArtwork(
+  album: Pick<AlbumEntry, "sourceArtist" | "sourceAlbum">,
+  apiKey: string,
+): Promise<string> {
+  const payload = await callLastFm<LastFmAlbumInfoResponse>("album.getinfo", {
+    artist: album.sourceArtist,
+    album: album.sourceAlbum,
+    autocorrect: "1",
+  }, apiKey);
+  const lastFmImage = readBestImage(payload.album?.image);
+  if (lastFmImage && !isLastFmPlaceholderImageUrl(lastFmImage)) {
+    return lastFmImage;
+  }
+
+  return lookupMusicBrainzAlbumArtwork({
+    artist: album.sourceArtist,
+    album: album.sourceAlbum,
+  });
 }
 
 export function sortAlbums(albums: AlbumEntry[], rankingMode: RankingMode): AlbumEntry[] {
@@ -1029,12 +1099,40 @@ function loadArtworkCache(): Record<string, ArtworkCacheEntry> {
   }
 }
 
+function loadAlbumOverrideCache(): Record<string, AlbumOverrideCacheEntry> {
+  try {
+    const raw = window.localStorage.getItem(ALBUM_OVERRIDE_CACHE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([sourceKey, value]) => {
+        const entry = normalizeAlbumOverrideCacheEntry(value);
+        return entry ? [[sourceKey, entry]] : [];
+      }),
+    );
+  } catch (error) {
+    console.warn("Could not load album override cache", error);
+    return {};
+  }
+}
+
 function persistDurationCache(cache: Record<string, DurationCacheEntry>): void {
   window.localStorage.setItem(DURATION_CACHE_KEY, JSON.stringify(cache));
 }
 
 function persistArtworkCache(cache: Record<string, ArtworkCacheEntry>): void {
   window.localStorage.setItem(ARTWORK_CACHE_KEY, JSON.stringify(cache));
+}
+
+function persistAlbumOverrideCache(cache: Record<string, AlbumOverrideCacheEntry>): void {
+  window.localStorage.setItem(ALBUM_OVERRIDE_CACHE_KEY, JSON.stringify(cache));
 }
 
 function syncDurationCacheFromStorage(): void {
@@ -1059,6 +1157,18 @@ function syncArtworkCacheFromStorage(): void {
   }
 
   Object.assign(artworkCache, latestCache);
+}
+
+function syncAlbumOverrideCacheFromStorage(): void {
+  const latestCache = loadAlbumOverrideCache();
+
+  for (const key of Object.keys(albumOverrideCache)) {
+    if (!(key in latestCache)) {
+      delete albumOverrideCache[key];
+    }
+  }
+
+  Object.assign(albumOverrideCache, latestCache);
 }
 
 function loadRecentTracksCheckpoint(queryKey: string): RecentTracksCheckpoint | null {
@@ -1176,6 +1286,29 @@ function normalizeArtworkCacheEntry(value: unknown): ArtworkCacheEntry | null {
   }
 
   return {
+    imageUrl: entry.imageUrl.trim(),
+    checkedAt: Number.isFinite(entry.checkedAt) ? entry.checkedAt : 0,
+  };
+}
+
+function normalizeAlbumOverrideCacheEntry(value: unknown): AlbumOverrideCacheEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entry = value as Partial<AlbumOverrideCacheEntry>;
+  if (
+    typeof entry.album !== "string" ||
+    typeof entry.artist !== "string" ||
+    typeof entry.imageUrl !== "string" ||
+    typeof entry.checkedAt !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    album: entry.album.trim(),
+    artist: entry.artist.trim(),
     imageUrl: entry.imageUrl.trim(),
     checkedAt: Number.isFinite(entry.checkedAt) ? entry.checkedAt : 0,
   };

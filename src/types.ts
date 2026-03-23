@@ -51,6 +51,9 @@ export interface MissingArtworkEntry {
   artist: string;
   album: string;
   albumKey: string;
+  sourceArtist: string;
+  sourceAlbum: string;
+  sourceKey: string;
 }
 
 export interface AlbumEntry {
@@ -60,6 +63,9 @@ export interface AlbumEntry {
   imageUrl: string;
   playCount: number;
   approximateListeningMs: number;
+  sourceArtist: string;
+  sourceAlbum: string;
+  sourceKey: string;
   tracks: Map<string, AlbumTrack>;
 }
 
@@ -106,6 +112,12 @@ export interface LastFmRecentTracksResponse {
 export interface LastFmTrackInfoResponse {
   track?: {
     duration?: string;
+  };
+}
+
+export interface LastFmAlbumInfoResponse {
+  album?: {
+    image?: LastFmImage[];
   };
 }
 

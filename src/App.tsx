@@ -16,6 +16,8 @@ import {
   getMissingDurationEntries,
   getRecentTracksResumeState,
   hydrateApproximateListeningTimes,
+  refreshAlbumArtwork,
+  saveAlbumOverride,
   saveAlbumArtworkOverride,
   saveTrackDurationOverride,
   sortAlbums,
@@ -93,6 +95,7 @@ function App() {
   const [generatedResult, setGeneratedResult] = useState<GeneratedResultState | null>(null);
   const [editingAlbum, setEditingAlbum] = useState<AlbumEntry | null>(null);
   const [albumEditDraft, setAlbumEditDraft] = useState<AlbumEditDraft | null>(null);
+  const [isRefreshingAlbumArtwork, setIsRefreshingAlbumArtwork] = useState(false);
   const [missingArtwork, setMissingArtwork] = useState<MissingArtworkEntry[]>([]);
   const [missingDurations, setMissingDurations] = useState<MissingDurationEntry[]>([]);
   const [imageOverrides, setImageOverrides] = useState<Record<string, string>>({});
@@ -614,48 +617,59 @@ function App() {
   function handleAlbumEditClose() {
     setEditingAlbum(null);
     setAlbumEditDraft(null);
+    setIsRefreshingAlbumArtwork(false);
   }
 
-  function handleAlbumEditSave() {
-    if (!generatedResult || !editingAlbum || !albumEditDraft) {
-      return;
+  function validateAlbumEditDraft(): AlbumEditDraft | null {
+    if (!albumEditDraft) {
+      return null;
     }
 
-    const trimmedAlbum = albumEditDraft.album.trim();
-    const trimmedArtist = albumEditDraft.artist.trim();
-    const trimmedImageUrl = albumEditDraft.imageUrl.trim();
+    const trimmedDraft = {
+      album: albumEditDraft.album.trim(),
+      artist: albumEditDraft.artist.trim(),
+      imageUrl: albumEditDraft.imageUrl.trim(),
+    };
 
-    if (!trimmedAlbum || !trimmedArtist) {
+    if (!trimmedDraft.album || !trimmedDraft.artist) {
       setStatus({
         tone: "error",
         message: "Enter both an album title and an artist label.",
       });
-      return;
+      return null;
     }
 
-    if (trimmedImageUrl) {
+    if (trimmedDraft.imageUrl) {
       try {
-        const parsedUrl = new URL(trimmedImageUrl);
+        const parsedUrl = new URL(trimmedDraft.imageUrl);
         if (!/^https?:$/.test(parsedUrl.protocol)) {
           throw new Error("Unsupported protocol");
         }
       } catch {
         setStatus({
           tone: "error",
-          message: `Enter a valid image URL for ${trimmedAlbum}.`,
+          message: `Enter a valid image URL for ${trimmedDraft.album}.`,
         });
-        return;
+        return null;
       }
+    }
+
+    return trimmedDraft;
+  }
+
+  function applyAlbumEditDraft(trimmedDraft: AlbumEditDraft) {
+    if (!generatedResult || !editingAlbum || !albumEditDraft) {
+      return;
     }
 
     const nextSortedAlbums = generatedResult.albums.map((candidate) =>
       candidate === editingAlbum
         ? {
             ...candidate,
-            album: trimmedAlbum,
-            artist: trimmedArtist,
-            artistNames: new Set([trimmedArtist]),
-            imageUrl: trimmedImageUrl,
+            album: trimmedDraft.album,
+            artist: trimmedDraft.artist,
+            artistNames: new Set([trimmedDraft.artist]),
+            imageUrl: trimmedDraft.imageUrl,
           }
         : candidate,
     );
@@ -686,9 +700,68 @@ function App() {
     );
     setStatus({
       tone: "success",
-      message: `Saved edits for ${trimmedAlbum}.`,
+      message: `Saved edits for ${trimmedDraft.album}.`,
     });
     handleAlbumEditClose();
+  }
+
+  function handleAlbumEditSave() {
+    const trimmedDraft = validateAlbumEditDraft();
+    if (!trimmedDraft) {
+      return;
+    }
+
+    applyAlbumEditDraft(trimmedDraft);
+  }
+
+  function handleAlbumEditCacheSave() {
+    const trimmedDraft = validateAlbumEditDraft();
+    if (!trimmedDraft || !editingAlbum) {
+      return;
+    }
+
+    saveAlbumOverride(editingAlbum, trimmedDraft);
+    applyAlbumEditDraft(trimmedDraft);
+  }
+
+  async function handleAlbumArtworkRefresh() {
+    const apiKey = getApiKey();
+    if (!editingAlbum || !apiKey) {
+      return;
+    }
+
+    setIsRefreshingAlbumArtwork(true);
+    try {
+      const refreshedImageUrl = await refreshAlbumArtwork(editingAlbum, apiKey);
+      if (!refreshedImageUrl) {
+        setStatus({
+          tone: "info",
+          message: `No refreshed artwork was found for ${editingAlbum.album}.`,
+        });
+        return;
+      }
+
+      setAlbumEditDraft((current) =>
+        current
+          ? {
+              ...current,
+              imageUrl: refreshedImageUrl,
+            }
+          : current,
+      );
+      setStatus({
+        tone: "success",
+        message: `Refreshed artwork for ${editingAlbum.album}.`,
+      });
+    } catch (error) {
+      console.error(error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Artwork refresh failed.",
+      });
+    } finally {
+      setIsRefreshingAlbumArtwork(false);
+    }
   }
 
   function setNextExportPreview(nextBlob: Blob | null) {
@@ -957,6 +1030,8 @@ function App() {
       {editingAlbum && albumEditDraft ? (
         <AlbumEditModal
           draft={albumEditDraft}
+          album={editingAlbum}
+          isRefreshingArtwork={isRefreshingAlbumArtwork}
           onChange={(key, value) =>
             setAlbumEditDraft((current) =>
               current
@@ -968,6 +1043,8 @@ function App() {
             )
           }
           onClose={handleAlbumEditClose}
+          onRefreshArtwork={() => void handleAlbumArtworkRefresh()}
+          onSaveToCache={handleAlbumEditCacheSave}
           onSave={handleAlbumEditSave}
         />
       ) : null}
@@ -1025,13 +1102,26 @@ interface SummaryPanelProps {
 }
 
 interface AlbumEditModalProps {
+  album: AlbumEntry;
   draft: AlbumEditDraft;
+  isRefreshingArtwork: boolean;
   onChange: (key: keyof AlbumEditDraft, value: string) => void;
   onClose: () => void;
+  onRefreshArtwork: () => void;
+  onSaveToCache: () => void;
   onSave: () => void;
 }
 
-function AlbumEditModal({ draft, onChange, onClose, onSave }: AlbumEditModalProps) {
+function AlbumEditModal({
+  album,
+  draft,
+  isRefreshingArtwork,
+  onChange,
+  onClose,
+  onRefreshArtwork,
+  onSaveToCache,
+  onSave,
+}: AlbumEditModalProps) {
   return (
     <div className="modal-backdrop" role="presentation">
       <div className="modal-shell" role="dialog" aria-modal="true" aria-label="Edit album metadata">
@@ -1082,11 +1172,30 @@ function AlbumEditModal({ draft, onChange, onClose, onSave }: AlbumEditModalProp
                 onChange={(event) => onChange("imageUrl", event.target.value)}
               />
             </label>
+            <div className="album-edit-actions">
+              <a
+                className="secondary-link"
+                href={buildLastFmAlbumUrl({
+                  artist: album.sourceArtist,
+                  album: album.sourceAlbum,
+                })}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Update artwork on Last.fm
+              </a>
+              <button type="button" onClick={onRefreshArtwork} disabled={isRefreshingArtwork}>
+                {isRefreshingArtwork ? "Refreshing image..." : "Refresh image"}
+              </button>
+            </div>
           </div>
         </div>
         <div className="modal-actions">
           <button type="button" onClick={onClose}>
             Cancel
+          </button>
+          <button type="button" onClick={onSaveToCache}>
+            Add changes to local cache
           </button>
           <button type="button" onClick={onSave}>
             Save changes
@@ -1311,6 +1420,7 @@ function PreviewGrid({
         const hasMissingArtwork = getMissingArtworkEntries([album]).length > 0;
         const hasMissingDurations =
           showDurationWarnings && getMissingDurationEntries([album]).length > 0;
+        const hasWarning = hasMissingArtwork || hasMissingDurations;
         const warningClassName =
           hasMissingArtwork && hasMissingDurations
             ? "has-critical-warning"
@@ -1326,12 +1436,7 @@ function PreviewGrid({
             onClick={() => onEdit(album)}
             aria-label={`Edit ${album.album} by ${album.artist}`}
           >
-            {hasMissingArtwork || hasMissingDurations ? (
-              <div className="tile-warning-stack" aria-hidden="true">
-                {hasMissingArtwork ? <span className="tile-warning-badge">! Artwork missing</span> : null}
-                {hasMissingDurations ? <span className="tile-warning-badge">! Duration gaps</span> : null}
-              </div>
-            ) : null}
+            {hasWarning ? <span className="tile-warning-icon" aria-hidden="true">!</span> : null}
             {album.imageUrl ? (
               <img src={album.imageUrl} alt={`${album.album} by ${album.artist}`} />
             ) : (
