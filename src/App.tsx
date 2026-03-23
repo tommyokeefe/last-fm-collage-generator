@@ -829,16 +829,11 @@ function App() {
     <div className="page-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">React + Vite + TypeScript</p>
           <h1>Last.fm Collage Generator</h1>
           <p className="hero-copy">
-            Generate album-cover collages directly in the browser from your
-            Last.fm listening history.
+            Last FM album cover collage generation based on play count or
+            approximate listening time.
           </p>
-        </div>
-        <div className="hero-card">
-          <p className="hero-card-label">Deployment target</p>
-          <p>Static site for a Vercel-hosted subdomain</p>
         </div>
       </header>
 

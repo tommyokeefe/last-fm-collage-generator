@@ -48,20 +48,7 @@ select {
 }
 
 .hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 1.5rem;
-  align-items: flex-start;
   margin-bottom: 2rem;
-}
-
-.eyebrow {
-  margin: 0 0 0.5rem;
-  color: var(--accent);
-  font-size: 0.85rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 h1,
@@ -80,24 +67,12 @@ h1 {
   max-width: 64ch;
 }
 
-.hero-card,
 .panel {
   border: 1px solid var(--panel-border);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
     var(--panel);
   border-radius: 20px;
   box-shadow: var(--shadow);
-}
-
-.hero-card {
-  min-width: 220px;
-  padding: 1rem 1.25rem;
-}
-
-.hero-card-label {
-  margin: 0 0 0.35rem;
-  color: var(--text-muted);
-  font-size: 0.9rem;
 }
 
 .layout {
@@ -703,8 +678,7 @@ button:disabled {
     width: min(100% - 1rem, 100%);
   }
 
-  .panel,
-  .hero-card {
+  .panel {
     padding: 1rem;
   }
 
