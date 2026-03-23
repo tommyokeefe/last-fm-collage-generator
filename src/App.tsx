@@ -1666,7 +1666,7 @@ function MissingDataPanel({
             <button
               key={item.album.sourceKey}
               type="button"
-              className="grid gap-3.5 rounded-2xl border border-border/12 bg-foreground/[0.03] p-4 text-left [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)] sm:grid-cols-[88px_minmax(0,1fr)]"
+              className={`grid gap-3.5 rounded-2xl border ${edgeBorderClass} bg-foreground/[0.03] p-4 text-left [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)] sm:grid-cols-[88px_minmax(0,1fr)]`}
               onClick={() => onOpenAlbum(item.album)}
               aria-label={`Edit ${item.album.album} by ${item.album.artist}`}
             >
