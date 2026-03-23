@@ -1,10 +1,21 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
 import { renderExportBlob } from "./lib/collage";
 
 vi.mock("./lib/collage", () => ({
   renderExportBlob: vi.fn(),
 }));
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+
+  return { promise, resolve, reject };
+}
 
 describe("App", () => {
   beforeEach(() => {
@@ -73,6 +84,48 @@ describe("App", () => {
     expect(screen.getByText("Album A")).toBeInTheDocument();
     expect(screen.queryByText("#1")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export PNG" })).toBeEnabled();
+  });
+
+  it("shows a centered progress overlay while generating a collage", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const fetchDeferred = createDeferred<Response>();
+    vi.spyOn(globalThis, "fetch").mockImplementationOnce(() => fetchDeferred.promise);
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    const progressDialog = screen.getByRole("dialog", { name: "Operation in progress" });
+    expect(progressDialog).toBeInTheDocument();
+    expect(within(progressDialog).getByText(/Fetching listening history from Last\.fm\.\.\./)).toBeInTheDocument();
+
+    fetchDeferred.resolve(
+      new Response(
+        JSON.stringify({
+          recenttracks: {
+            track: [
+              {
+                artist: { name: "Artist One" },
+                album: { "#text": "Album A" },
+                name: "Track 1",
+                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                date: { uts: "123" },
+              },
+            ],
+            "@attr": { totalPages: "1" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("dialog", { name: "Operation in progress" })).not.toBeInTheDocument();
   });
 
   it("refreshes album artwork and saves modal edits to the local cache", async () => {
@@ -249,6 +302,60 @@ describe("App", () => {
       },
     });
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the progress overlay above the album modal while track data is loading", async () => {
+    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
+    const trackFetchDeferred = createDeferred<Response>();
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            recenttracks: {
+              track: [
+                {
+                  artist: { name: "Artist One" },
+                  album: { "#text": "Album A" },
+                  name: "Track 1",
+                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
+                  date: { uts: "123" },
+                },
+              ],
+              "@attr": { totalPages: "1" },
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockImplementationOnce(() => trackFetchDeferred.promise);
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Last.fm username"), {
+      target: { value: "tommy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Track information" }));
+
+    expect(screen.getByRole("dialog", { name: "Edit album information" })).toBeInTheDocument();
+    const progressDialog = screen.getByRole("dialog", { name: "Operation in progress" });
+    expect(progressDialog).toBeInTheDocument();
+    expect(within(progressDialog).getByText("Fetching track durations for Album A...")).toBeInTheDocument();
+
+    trackFetchDeferred.resolve(
+      new Response(JSON.stringify({ track: { duration: "180000" } }), { status: 200 }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Fetched track data for Album A.")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("dialog", { name: "Operation in progress" })).not.toBeInTheDocument();
   });
 
   it("toggles to an exact PNG preview", async () => {

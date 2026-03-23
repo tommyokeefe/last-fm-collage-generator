@@ -484,6 +484,40 @@ button:disabled {
   overflow-y: auto;
 }
 
+.progress-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(4, 9, 17, 0.42);
+}
+
+.progress-overlay-panel {
+  width: min(440px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: rgba(17, 19, 24, 0.9);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+  backdrop-filter: blur(6px);
+}
+
+.progress-overlay-heading {
+  margin-bottom: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.progress-overlay-status {
+  margin-top: 0;
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .modal-shell {
   width: min(760px, 100%);
   max-height: calc(100vh - 2rem);

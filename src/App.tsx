@@ -222,6 +222,8 @@ function App() {
   }, [exportPreviewUrl]);
 
   const canExport = !isBusy && renderedAlbums.length > 0;
+  const isProgressOverlayVisible =
+    isBusy || isLoadingAlbumTracks || isRefreshingAlbumTracks || isRefreshingAlbumArtwork;
 
   function syncGeneratedResultCache(nextState: CachedGeneratedResultState) {
     setGeneratedResultCache((current) => ({
@@ -967,7 +969,7 @@ function App() {
             </div>
           </form>
 
-          <StatusBanner status={status} />
+          {!isProgressOverlayVisible ? <StatusBanner status={status} /> : null}
           <SummaryPanel summary={summary} />
         </section>
 
@@ -1067,6 +1069,7 @@ function App() {
           onSave={handleAlbumEditSave}
         />
       ) : null}
+      {isProgressOverlayVisible ? <ProgressOverlay status={status} /> : null}
     </div>
   );
 }
@@ -1086,9 +1089,21 @@ function StatusBanner({ status }: StatusBannerProps) {
 
   return (
     <div className={className}>
+      <StatusContent status={status} />
+    </div>
+  );
+}
+
+interface StatusContentProps {
+  status: StatusState;
+}
+
+function StatusContent({ status }: StatusContentProps) {
+  return (
+    <>
       <div className="status-message">{status.message}</div>
       {status.progress ? <FetchProgress progress={status.progress} /> : null}
-    </div>
+    </>
   );
 }
 
@@ -1112,6 +1127,37 @@ function FetchProgress({ progress }: FetchProgressProps) {
       <progress value={progress.completed} max={progress.total}>
         {progress.completed} of {progress.total}
       </progress>
+    </div>
+  );
+}
+
+interface ProgressOverlayProps {
+  status: StatusState;
+}
+
+function ProgressOverlay({ status }: ProgressOverlayProps) {
+  const className = [
+    "status-banner",
+    "progress-overlay-status",
+    status.tone === "error" ? "is-error" : "",
+    status.tone === "success" ? "is-success" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className="progress-overlay" role="presentation">
+      <div
+        className="progress-overlay-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Operation in progress"
+      >
+        <div className="progress-overlay-heading">Working...</div>
+        <div className={className}>
+          <StatusContent status={status} />
+        </div>
+      </div>
     </div>
   );
 }
