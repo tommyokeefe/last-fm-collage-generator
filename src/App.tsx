@@ -1,5 +1,11 @@
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
+import {
+  THEME_CHANGE_EVENT,
+  getStoredThemePreference,
+  initTheme,
+  setThemePreference,
+} from "@tommyokeefe/theme/theme-client";
 import { renderExportBlob } from "./lib/collage";
 import {
   aggregateAlbums,
@@ -58,6 +64,11 @@ const GRID_OPTIONS: ReadonlyArray<GridSize> = [
   "9x9",
   "10x10",
 ];
+const THEME_OPTIONS = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
+] as const;
 const DEFAULT_SETTINGS: Settings = {
   username: "",
   timeRange: "1m",
@@ -89,6 +100,7 @@ interface AlbumEditDraft {
 }
 
 type AlbumEditTab = "details" | "tracks";
+type ThemePreference = (typeof THEME_OPTIONS)[number]["value"];
 
 interface AlbumTrackDraft extends AlbumTrackDurationEntry {
   durationInput: string;
@@ -102,6 +114,7 @@ interface MissingDataAlbumEntry {
 
 function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(loadThemePreference);
   const [status, setStatus] = useState<StatusState>({
     tone: getApiKey() ? "success" : "info",
     message: getApiKey()
@@ -134,6 +147,21 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  useEffect(() => {
+    const themeController = initTheme();
+    const syncThemePreference = () => {
+      setThemePreferenceState(loadThemePreference());
+    };
+
+    syncThemePreference();
+    window.addEventListener(THEME_CHANGE_EVENT, syncThemePreference);
+
+    return () => {
+      themeController.dispose();
+      window.removeEventListener(THEME_CHANGE_EVENT, syncThemePreference);
+    };
+  }, []);
 
   const { rows, columns } = useMemo(
     () => parseGridSize(settings.gridSize),
@@ -899,12 +927,30 @@ function App() {
   return (
     <div className="page-shell">
       <header className="hero">
-        <div>
+        <div className="hero-copy-block">
           <h1>Last.fm Collage Generator</h1>
           <p className="hero-copy">
             Last FM album cover collage generation based on play count or
             approximate listening time.
           </p>
+        </div>
+        <div className="hero-actions">
+          <div className="theme-mode-toggle" role="group" aria-label="Theme mode">
+            {THEME_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={themePreference === option.value ? "is-active" : ""}
+                aria-pressed={themePreference === option.value}
+                onClick={() => {
+                  setThemePreference(option.value);
+                  setThemePreferenceState(option.value);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -1693,6 +1739,15 @@ function loadSettings(): Settings {
     console.warn("Could not restore saved settings", error);
     return DEFAULT_SETTINGS;
   }
+}
+
+function loadThemePreference(): ThemePreference {
+  const preference = getStoredThemePreference();
+  if (preference === "light" || preference === "dark") {
+    return preference;
+  }
+
+  return "system";
 }
 
 function getApiKey(): string {
