@@ -47,10 +47,29 @@ import type {
 
 const SETTINGS_KEY = "lastfm-collage-settings";
 type PreviewMode = "config" | "export" | "missing-data";
-const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
+const BASE_TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "7d", label: "Last 7 days" },
   { value: "1m", label: "Last 30 days" },
 ];
+const EXTENDED_TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
+  { value: "3m", label: "Last 90 days" },
+  { value: "6m", label: "Last 180 days" },
+  { value: "12m", label: "Last 365 days" },
+  { value: "overall", label: "All time" },
+];
+
+function getTimeRangeOptions(): ReadonlyArray<{ value: TimeRangeValue; label: string }> {
+  try {
+    const flag = window.localStorage.getItem("lastfm-collage-enable-extended-time-ranges");
+    if (flag === "1" || flag === "true") {
+      return [...BASE_TIME_RANGE_OPTIONS, ...EXTENDED_TIME_RANGE_OPTIONS];
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return BASE_TIME_RANGE_OPTIONS;
+}
 const GRID_OPTIONS: ReadonlyArray<GridSize> = [
   "3x3",
   "4x4",
@@ -1233,7 +1252,7 @@ function App() {
                 }
                 disabled={isBusy}
               >
-                {TIME_RANGE_OPTIONS.map((option) => (
+                {getTimeRangeOptions().map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -2073,7 +2092,7 @@ function loadSettings(): Settings {
       return DEFAULT_SETTINGS;
     }
 
-    const timeRange = TIME_RANGE_OPTIONS.some((option) => option.value === parsed.timeRange)
+    const timeRange = getTimeRangeOptions().some((option) => option.value === parsed.timeRange)
       ? (parsed.timeRange as TimeRangeValue)
       : DEFAULT_SETTINGS.timeRange;
 

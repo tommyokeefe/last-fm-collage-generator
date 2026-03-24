@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 
 export type RankingMode = "plays" | "listening-time";
 export type StatusTone = "info" | "success" | "error";
-export type TimeRangeValue = "7d" | "1m";
+export type TimeRangeValue = "7d" | "1m" | "3m" | "6m" | "12m" | "overall";
 export type GridSize =
   | "3x3"
   | "4x4"

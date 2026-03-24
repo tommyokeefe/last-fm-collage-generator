@@ -37,13 +37,20 @@ const RECENT_TRACKS_CACHE_KEY = "lastfm-collage-recent-tracks-cache";
 const LASTFM_MIN_REQUEST_INTERVAL_MS = 1000;
 const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
 const MISSING_DURATION_RETRY_AFTER_MS = 60 * 60 * 1000;
-const DAYS_BY_RANGE: Record<TimeRangeValue, number> = {
+const DAYS_BY_RANGE: Partial<Record<TimeRangeValue, number>> = {
   "7d": 7,
   "1m": 30,
+  "3m": 90,
+  "6m": 180,
+  "12m": 365,
 };
 const RECENT_TRACKS_CACHE_MAX_AGE_MS: Record<TimeRangeValue, number> = {
   "7d": 12 * 60 * 60 * 1000,
   "1m": 12 * 60 * 60 * 1000,
+  "3m": 12 * 60 * 60 * 1000,
+  "6m": 12 * 60 * 60 * 1000,
+  "12m": 12 * 60 * 60 * 1000,
+  "overall": 24 * 60 * 60 * 1000,
 };
 
 const durationCache = loadDurationCache();
@@ -126,7 +133,11 @@ interface MusicBrainzReleaseSearchResponse {
 
 export function buildTimeRange(value: TimeRangeValue): TimeRange {
   const now = Math.floor(Date.now() / 1000);
-  const days = DAYS_BY_RANGE[value];
+  const days = (DAYS_BY_RANGE as Partial<Record<string, number>>)[value];
+
+  if (typeof days !== "number") {
+    return { label: value };
+  }
 
   return {
     label: value,
