@@ -8,35 +8,26 @@ import {
 } from "@tommyokeefe/theme/theme-client";
 import { renderExportBlob } from "./lib/collage";
 import {
-  aggregateAlbums,
+  applyCachedAlbumMetadata,
   applyCachedArtwork,
-  applyCachedDurations,
   buildLastFmAlbumUrl,
-  buildMusicBrainzAlbumUrl,
-  buildMusicBrainzTrackUrl,
-  buildTimeRange,
-  fetchMissingDurationsFromMusicBrainz,
-  fetchRecentTracks,
-  formatMetric,
-  getAlbumTrackDurationEntries,
+  computeListeningTimes,
+  fetchAlbumMetadata,
+  getMissingAlbumMetadataEntries,
   getMissingArtworkEntries,
-  getMissingDurationEntries,
-  getRecentTracksResumeState,
-  hydrateApproximateListeningTimes,
-  refreshAlbumTrackDurationsFromMusicBrainz,
+  fetchTopAlbums,
+  formatMetric,
   refreshAlbumArtwork,
+  saveAlbumMetadata,
   saveAlbumOverride,
-  saveTrackDurationOverride,
   sortAlbums,
 } from "./lib/lastfm";
 import type {
   AlbumEntry,
-  AlbumTrackDurationEntry,
   ExportRenderOptions,
   FetchProgressState,
   GridSize,
   MissingArtworkEntry,
-  MissingDurationEntry,
   PreviewGridStyle,
   RankingMode,
   Settings,
@@ -47,28 +38,17 @@ import type {
 
 const SETTINGS_KEY = "lastfm-collage-settings";
 type PreviewMode = "config" | "export" | "missing-data";
-const BASE_TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
+const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "7d", label: "Last 7 days" },
   { value: "1m", label: "Last 30 days" },
-];
-const EXTENDED_TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "3m", label: "Last 90 days" },
   { value: "6m", label: "Last 180 days" },
   { value: "12m", label: "Last 365 days" },
   { value: "overall", label: "All time" },
 ];
 
-function getTimeRangeOptions(): ReadonlyArray<{ value: TimeRangeValue; label: string }> {
-  try {
-    const flag = window.localStorage.getItem("lastfm-collage-enable-extended-time-ranges");
-    if (flag === "1" || flag === "true") {
-      return [...BASE_TIME_RANGE_OPTIONS, ...EXTENDED_TIME_RANGE_OPTIONS];
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  return BASE_TIME_RANGE_OPTIONS;
+function getTimeRangeOptions() {
+  return TIME_RANGE_OPTIONS;
 }
 const GRID_OPTIONS: ReadonlyArray<GridSize> = [
   "3x3",
@@ -200,7 +180,7 @@ interface GeneratedResultState {
 
 interface CachedGeneratedResultState extends GeneratedResultState {
   missingArtwork: MissingArtworkEntry[];
-  missingDurations: MissingDurationEntry[];
+  missingAlbumMetadata: AlbumEntry[];
   summary: SummaryState | null;
 }
 
@@ -208,19 +188,17 @@ interface AlbumEditDraft {
   album: string;
   artist: string;
   imageUrl: string;
+  trackCountInput: string;
+  albumDurationInput: string;
 }
 
 type AlbumEditTab = "details" | "tracks";
 type ThemePreference = (typeof THEME_OPTIONS)[number]["value"];
 
-interface AlbumTrackDraft extends AlbumTrackDurationEntry {
-  durationInput: string;
-}
-
 interface MissingDataAlbumEntry {
   album: AlbumEntry;
   hasMissingArtwork: boolean;
-  hasMissingDurations: boolean;
+  hasMissingMetadata: boolean;
 }
 
 function App() {
@@ -242,17 +220,16 @@ function App() {
   const [editingAlbum, setEditingAlbum] = useState<AlbumEntry | null>(null);
   const [albumEditDraft, setAlbumEditDraft] = useState<AlbumEditDraft | null>(null);
   const [albumEditTab, setAlbumEditTab] = useState<AlbumEditTab>("details");
-  const [albumTrackDrafts, setAlbumTrackDrafts] = useState<AlbumTrackDraft[]>([]);
-  const [isLoadingAlbumTracks, setIsLoadingAlbumTracks] = useState(false);
-  const [isRefreshingAlbumTracks, setIsRefreshingAlbumTracks] = useState(false);
   const [isRefreshingAlbumArtwork, setIsRefreshingAlbumArtwork] = useState(false);
+  const [isFetchingAlbumInfo, setIsFetchingAlbumInfo] = useState(false);
   const [missingArtwork, setMissingArtwork] = useState<MissingArtworkEntry[]>([]);
-  const [missingDurations, setMissingDurations] = useState<MissingDurationEntry[]>([]);
+  const [missingAlbumMetadata, setMissingAlbumMetadata] = useState<AlbumEntry[]>([]);
   const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
   const [exportPreviewUrl, setExportPreviewUrl] = useState<string | null>(null);
   const [isGeneratingExportPreview, setIsGeneratingExportPreview] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("config");
   const [viewRefreshKey, setViewRefreshKey] = useState(0);
+  const [showListeningTimeInfo, setShowListeningTimeInfo] = useState(false);
   const [resultsCopy, setResultsCopy] = useState(
     "Your collage will appear here after generation.",
   );
@@ -297,16 +274,6 @@ function App() {
     }),
     [settings.rankingMode, settings.timeRange, trimmedUsername],
   );
-  const hasAttemptedListeningTimeForCurrentRange = useMemo(
-    () =>
-      Object.values(generatedResultCache).some(
-        (result) =>
-          result.query.username === trimmedUsername &&
-          result.query.timeRange === settings.timeRange &&
-          result.query.rankingMode === "listening-time",
-      ),
-    [generatedResultCache, settings.timeRange, trimmedUsername],
-  );
   const visibleGeneratedAlbums = useMemo(
     () =>
       generatedResult
@@ -315,24 +282,11 @@ function App() {
     [generatedResult],
   );
   const hiddenAlbumCount = generatedResult?.hiddenAlbumSourceKeys.length ?? 0;
-  const visibleMissingDurations = useMemo(
-    () => (hasAttemptedListeningTimeForCurrentRange ? missingDurations : []),
-    [hasAttemptedListeningTimeForCurrentRange, missingDurations],
-  );
   const missingDataAlbums = useMemo(
-    () => buildMissingDataAlbums(visibleGeneratedAlbums, missingArtwork, visibleMissingDurations),
-    [missingArtwork, visibleGeneratedAlbums, visibleMissingDurations],
+    () => buildMissingDataAlbums(visibleGeneratedAlbums, missingArtwork, missingAlbumMetadata),
+    [missingArtwork, missingAlbumMetadata, visibleGeneratedAlbums],
   );
-  const visibleSummary = useMemo(
-    () =>
-      summary
-        ? {
-            ...summary,
-            durationGaps: visibleMissingDurations.length,
-          }
-        : null,
-    [summary, visibleMissingDurations.length],
-  );
+  const visibleSummary = summary;
 
   useEffect(() => {
     if (!generatedResult || !matchesGeneratedQuery(generatedResult, generatedQuery)) {
@@ -407,8 +361,7 @@ function App() {
   }, [exportPreviewUrl]);
 
   const canExport = !isBusy && renderedAlbums.length > 0;
-  const isProgressOverlayVisible =
-    isBusy || isLoadingAlbumTracks || isRefreshingAlbumTracks || isRefreshingAlbumArtwork;
+  const isProgressOverlayVisible = isBusy || isRefreshingAlbumArtwork || isFetchingAlbumInfo;
 
   function requestViewRefresh() {
     setViewRefreshKey((current) => current + 1);
@@ -435,7 +388,7 @@ function App() {
       hiddenAlbumSourceKeys: nextState.hiddenAlbumSourceKeys,
     });
     setMissingArtwork(nextState.missingArtwork);
-    setMissingDurations(nextState.missingDurations);
+    setMissingAlbumMetadata(nextState.missingAlbumMetadata ?? []);
     setSummary(nextState.summary);
     setRenderedAlbums(nextRenderedAlbums);
     setResultsCopy(
@@ -448,7 +401,7 @@ function App() {
   function clearGeneratedResultView(message: string) {
     setGeneratedResult(null);
     setMissingArtwork([]);
-    setMissingDurations([]);
+    setMissingAlbumMetadata([]);
     setRenderedAlbums([]);
     setNextExportPreview(null);
     setSummary(null);
@@ -460,205 +413,8 @@ function App() {
     });
   }
 
-  function buildAlbumTrackDrafts(album: AlbumEntry): AlbumTrackDraft[] {
-    return getAlbumTrackDurationEntries(album).map((track) => ({
-      ...track,
-      durationInput: formatTrackDurationInput(track.durationMs),
-    }));
-  }
-
-  function syncEditingAlbumState(nextAlbums: AlbumEntry[]) {
-    if (!editingAlbum) {
-      return;
-    }
-
-    const nextEditingAlbum = nextAlbums.find((album) => album.sourceKey === editingAlbum.sourceKey);
-    if (!nextEditingAlbum) {
-      return;
-    }
-
-    setEditingAlbum(nextEditingAlbum);
-    setAlbumTrackDrafts(buildAlbumTrackDrafts(nextEditingAlbum));
-  }
-
-  function syncGeneratedResultAfterDurationChange() {
-    if (!generatedResult) {
-      return;
-    }
-
-    const nextAlbums = [...generatedResult.albums];
-    applyCachedDurations(nextAlbums);
-    const nextSortedAlbums = sortAlbums(nextAlbums, generatedResult.query.rankingMode);
-    const nextVisibleAlbums = getVisibleAlbums(
-      nextSortedAlbums,
-      generatedResult.hiddenAlbumSourceKeys,
-    );
-    const nextMissingDurations = getMissingDurationEntries(nextVisibleAlbums);
-    const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
-    const nextGeneratedResult = {
-      ...generatedResult,
-      albums: nextSortedAlbums,
-    };
-    const nextSummary = summary
-      ? {
-          ...summary,
-          albums: nextVisibleAlbums.length,
-          durationGaps: nextMissingDurations.length,
-        }
-      : summary;
-
-    setGeneratedResult(nextGeneratedResult);
-    setMissingDurations(nextMissingDurations);
-    setRenderedAlbums(nextRenderedAlbums);
-    setResultsCopy(
-      nextRenderedAlbums.length > 0
-        ? buildResultsCopy(
-            generatedResult.query.username,
-            generatedResult.query.rankingMode,
-            nextRenderedAlbums.length,
-          )
-        : "No albums remain in the collage.",
-    );
-    setSummary(nextSummary);
-    syncGeneratedResultCache({
-      ...nextGeneratedResult,
-      missingArtwork,
-      missingDurations: nextMissingDurations,
-      summary: nextSummary,
-    });
-    syncEditingAlbumState(nextSortedAlbums);
-  }
-
-  async function ensureAlbumTrackDataLoaded() {
-    const apiKey = getApiKey();
-    if (!editingAlbum || !generatedResult || !apiKey) {
-      return;
-    }
-
-    const currentTrackDrafts = buildAlbumTrackDrafts(editingAlbum);
-    setAlbumTrackDrafts(currentTrackDrafts);
-    if (!currentTrackDrafts.some((track) => track.checkedAt === 0)) {
-      return;
-    }
-
-    setIsLoadingAlbumTracks(true);
-    setStatus({
-      tone: "info",
-      message: `Fetching track durations for ${editingAlbum.album}...`,
-    });
-
-    try {
-      await hydrateApproximateListeningTimes([editingAlbum], apiKey);
-      syncGeneratedResultAfterDurationChange();
-      setStatus({
-        tone: "success",
-        message: `Fetched track data for ${editingAlbum.album}.`,
-      });
-    } catch (error) {
-      console.error(error);
-      setStatus({
-        tone: "error",
-        message: error instanceof Error ? error.message : "Track data lookup failed.",
-      });
-    } finally {
-      setIsLoadingAlbumTracks(false);
-    }
-  }
-
-  async function handleAlbumEditTabChange(nextTab: AlbumEditTab) {
+  function handleAlbumEditTabChange(nextTab: AlbumEditTab) {
     setAlbumEditTab(nextTab);
-    if (nextTab === "tracks") {
-      await ensureAlbumTrackDataLoaded();
-    }
-  }
-
-  async function handleAlbumTrackRefresh() {
-    if (!editingAlbum || !generatedResult) {
-      return;
-    }
-
-    setIsRefreshingAlbumTracks(true);
-    setStatus({
-      tone: "info",
-      message: `Refreshing track data for ${editingAlbum.album} from MusicBrainz...`,
-    });
-
-    try {
-      const result = await refreshAlbumTrackDurationsFromMusicBrainz(editingAlbum);
-      syncGeneratedResultAfterDurationChange();
-      setStatus({
-        tone: result.resolvedCount > 0 ? "success" : "info",
-        message:
-          result.resolvedCount > 0
-            ? `Refreshed track data for ${editingAlbum.album} from MusicBrainz.`
-            : `MusicBrainz did not find additional track data for ${editingAlbum.album}.`,
-      });
-    } catch (error) {
-      console.error(error);
-      setStatus({
-        tone: "error",
-        message: error instanceof Error ? error.message : "MusicBrainz track refresh failed.",
-      });
-    } finally {
-      setIsRefreshingAlbumTracks(false);
-    }
-  }
-
-  async function handleMissingDurationRefresh() {
-    if (!generatedResult) {
-      return;
-    }
-
-    if (visibleMissingDurations.length === 0) {
-      return;
-    }
-
-    setIsRefreshingAlbumTracks(true);
-    setStatus({
-      tone: "info",
-      message: "Refreshing missing track durations from MusicBrainz...",
-      progress: {
-        completed: 0,
-        total: visibleMissingDurations.length,
-        estimatedRemainingMs: 0,
-        unitLabel: "Tracks",
-      },
-    });
-
-    try {
-      const result = await fetchMissingDurationsFromMusicBrainz(
-        visibleMissingDurations,
-        (message) =>
-          setStatus((current) => ({
-            tone: "info",
-            message,
-            progress: current.progress,
-          })),
-        (progress) =>
-          setStatus({
-            tone: "info",
-            message: `Refreshing missing track durations from MusicBrainz... ${progress.completed} of ${progress.total}`,
-            progress,
-          }),
-      );
-
-      syncGeneratedResultAfterDurationChange();
-      setStatus({
-        tone: result.resolvedCount > 0 ? "success" : "info",
-        message:
-          result.resolvedCount > 0
-            ? `Recovered ${result.resolvedCount} track duration${result.resolvedCount === 1 ? "" : "s"} from MusicBrainz.`
-            : "MusicBrainz did not find additional missing track durations.",
-      });
-    } catch (error) {
-      console.error(error);
-      setStatus({
-        tone: "error",
-        message: error instanceof Error ? error.message : "MusicBrainz duration refresh failed.",
-      });
-    } finally {
-      setIsRefreshingAlbumTracks(false);
-    }
   }
 
   function handleRankingModeChange(nextRankingMode: RankingMode) {
@@ -713,150 +469,91 @@ function App() {
     if (!apiKey) {
       setGeneratedResult(null);
       setMissingArtwork([]);
-      setMissingDurations([]);
-      setStatus({
-        tone: "error",
-        message:
-          "Missing Last.fm API key. Set VITE_LASTFM_API_KEY before generating a collage.",
-      });
+      setMissingAlbumMetadata([]);
+      setStatus({ tone: "error", message: "Missing Last.fm API key. Set VITE_LASTFM_API_KEY before generating a collage." });
       return;
     }
 
     if (!trimmedUsername) {
       setGeneratedResult(null);
       setMissingArtwork([]);
-      setMissingDurations([]);
-      setStatus({
-        tone: "error",
-        message: "Enter a Last.fm username to continue.",
-      });
+      setMissingAlbumMetadata([]);
+      setStatus({ tone: "error", message: "Enter a Last.fm username to continue." });
       return;
     }
 
-    const timeRange = buildTimeRange(settings.timeRange);
     const isListeningTimeMode = settings.rankingMode === "listening-time";
-
     setIsBusy(true);
-    setStatus({
-      tone: "info",
-      message: isListeningTimeMode
-        ? "Step 1 of 2: Fetching listening history from Last.fm..."
-        : "Fetching listening history from Last.fm...",
-    });
+    setStatus({ tone: "info", message: "Fetching top albums from Last.fm..." });
 
     try {
-      const recentTracks = await fetchRecentTracks(
+      const albums = await fetchTopAlbums(
         trimmedUsername,
-        timeRange,
+        settings.timeRange,
         apiKey,
-        (message) =>
-          setStatus((current) => ({
-            tone: "info",
-            message: isListeningTimeMode ? `Step 1 of 2: ${message}` : message,
-            progress: current.progress,
-          })),
-        (progress) =>
-          setStatus({
-            tone: "info",
-            message: isListeningTimeMode
-              ? `Step 1 of 2: Fetching listening history from Last.fm... page ${progress.completed} of ${progress.total}`
-              : `Fetching listening history from Last.fm... page ${progress.completed} of ${progress.total}`,
-            progress,
-          }),
+        (message) => setStatus((current) => ({ tone: "info", message, progress: current.progress })),
+        (progress) => setStatus({ tone: "info", message: `Fetching top albums from Last.fm... page ${progress.completed} of ${progress.total}`, progress }),
       );
-      const aggregated = aggregateAlbums(recentTracks.items);
-      applyCachedArtwork(aggregated);
 
-      if (aggregated.length === 0) {
+      applyCachedArtwork(albums);
+      applyCachedAlbumMetadata(albums);
+
+      if (isListeningTimeMode) {
+        computeListeningTimes(albums);
+      }
+
+      if (albums.length === 0) {
         setGeneratedResult(null);
         setMissingArtwork([]);
-        setMissingDurations([]);
+        setMissingAlbumMetadata([]);
         setRenderedAlbums([]);
         setNextExportPreview(null);
         setSummary(null);
         setResultsCopy("No collage generated yet.");
-        setStatus({
-          tone: "error",
-          message: "No album scrobbles were found for that username and time range.",
-        });
+        setStatus({ tone: "error", message: "No albums were found for that username and time range." });
         return;
       }
 
-      const nextMissingArtwork = getMissingArtworkEntries(aggregated);
-      let nextMissingDurations: MissingDurationEntry[] = [];
-      if (isListeningTimeMode) {
-        setStatus({
-          tone: "info",
-          message: "Step 2 of 2: Fetching track durations from Last.fm...",
-        });
-        const listeningTimeResult = await hydrateApproximateListeningTimes(
-          aggregated,
-          apiKey,
-          (message) =>
-            setStatus((current) => ({
-              tone: "info",
-              message: `Step 2 of 2: ${message}`,
-              progress: current.progress,
-            })),
-          (progress) =>
-            setStatus({
-              tone: "info",
-              message: `Step 2 of 2: Fetching track durations from Last.fm... ${progress.completed} of ${progress.total}`,
-              progress,
-            }),
-        );
-        nextMissingDurations = listeningTimeResult.missingDurations;
-      }
-
-      const sorted = sortAlbums(aggregated, settings.rankingMode);
+      const sorted = sortAlbums(albums, settings.rankingMode);
       const nextRenderedAlbums = sorted.slice(0, rows * columns);
+      const nextMissingArtwork = getMissingArtworkEntries(sorted);
+      const nextMissingAlbumMetadata = isListeningTimeMode ? getMissingAlbumMetadataEntries(sorted) : [];
 
       const nextGeneratedResult = {
-        query: {
-          username: trimmedUsername,
-          timeRange: settings.timeRange,
-          rankingMode: settings.rankingMode,
-        },
+        query: { username: trimmedUsername, timeRange: settings.timeRange, rankingMode: settings.rankingMode },
         albums: sorted,
         hiddenAlbumSourceKeys: [],
       };
       const nextSummary = {
-        scrobbles: recentTracks.items.length,
+        scrobbles: sorted.reduce((sum, album) => sum + album.playCount, 0),
         albums: sorted.length,
-        durationGaps: nextMissingDurations.length,
       };
+
       setGeneratedResult(nextGeneratedResult);
       setMissingArtwork(nextMissingArtwork);
-      setMissingDurations(nextMissingDurations);
+      setMissingAlbumMetadata(nextMissingAlbumMetadata);
       setRenderedAlbums(nextRenderedAlbums);
       setSummary(nextSummary);
       setResultsCopy(buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length));
       syncGeneratedResultCache({
         ...nextGeneratedResult,
         missingArtwork: nextMissingArtwork,
-        missingDurations: nextMissingDurations,
+        missingAlbumMetadata: nextMissingAlbumMetadata,
         summary: nextSummary,
       });
-      setStatus({
-        tone: "success",
-        message: "Collage generated successfully.",
-      });
+      setStatus({ tone: "success", message: "Collage generated successfully." });
     } catch (error) {
       console.error(error);
       setGeneratedResult(null);
       setMissingArtwork([]);
-      setMissingDurations([]);
-      const resumeState = getRecentTracksResumeState(trimmedUsername, timeRange);
-      const baseMessage = error instanceof Error ? error.message : "Something went wrong.";
+      setMissingAlbumMetadata([]);
       setRenderedAlbums([]);
       setNextExportPreview(null);
       setSummary(null);
       setResultsCopy("Your collage will appear here after generation.");
       setStatus({
         tone: "error",
-        message: resumeState
-          ? `${baseMessage} Retry Generate to resume from page ${resumeState.nextPage} of ${resumeState.totalPages}.`
-          : baseMessage,
+        message: error instanceof Error ? error.message : "Something went wrong.",
       });
     } finally {
       setIsBusy(false);
@@ -905,20 +602,16 @@ function App() {
       album: album.album,
       artist: album.artist,
       imageUrl: album.imageUrl,
+      trackCountInput: album.trackCount ? String(album.trackCount) : "",
+      albumDurationInput: album.albumDurationMs ? formatTrackDurationInput(album.albumDurationMs) : "",
     });
     setAlbumEditTab("details");
-    setAlbumTrackDrafts(buildAlbumTrackDrafts(album));
-    setIsLoadingAlbumTracks(false);
-    setIsRefreshingAlbumTracks(false);
   }
 
   function handleAlbumEditClose() {
     setEditingAlbum(null);
     setAlbumEditDraft(null);
     setAlbumEditTab("details");
-    setAlbumTrackDrafts([]);
-    setIsLoadingAlbumTracks(false);
-    setIsRefreshingAlbumTracks(false);
     setIsRefreshingAlbumArtwork(false);
     requestViewRefresh();
   }
@@ -933,7 +626,7 @@ function App() {
     );
     const nextVisibleAlbums = getVisibleAlbums(generatedResult.albums, hiddenAlbumSourceKeys);
     const nextMissingArtwork = getMissingArtworkEntries(nextVisibleAlbums);
-    const nextMissingDurations = getMissingDurationEntries(nextVisibleAlbums);
+    const nextMissingAlbumMetadata = getMissingAlbumMetadataEntries(nextVisibleAlbums);
     const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
     const nextGeneratedResult = {
       ...generatedResult,
@@ -943,13 +636,12 @@ function App() {
       ? {
           ...summary,
           albums: nextVisibleAlbums.length,
-          durationGaps: nextMissingDurations.length,
         }
       : summary;
 
     setGeneratedResult(nextGeneratedResult);
     setMissingArtwork(nextMissingArtwork);
-    setMissingDurations(nextMissingDurations);
+    setMissingAlbumMetadata(nextMissingAlbumMetadata);
     setRenderedAlbums(nextRenderedAlbums);
     setResultsCopy(
       nextRenderedAlbums.length > 0
@@ -960,7 +652,7 @@ function App() {
     syncGeneratedResultCache({
       ...nextGeneratedResult,
       missingArtwork: nextMissingArtwork,
-      missingDurations: nextMissingDurations,
+      missingAlbumMetadata: nextMissingAlbumMetadata,
       summary: nextSummary,
     });
     setStatus({
@@ -977,7 +669,7 @@ function App() {
 
     const nextVisibleAlbums = generatedResult.albums;
     const nextMissingArtwork = getMissingArtworkEntries(nextVisibleAlbums);
-    const nextMissingDurations = getMissingDurationEntries(nextVisibleAlbums);
+    const nextMissingAlbumMetadata = getMissingAlbumMetadataEntries(nextVisibleAlbums);
     const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
     const nextGeneratedResult = {
       ...generatedResult,
@@ -987,20 +679,19 @@ function App() {
       ? {
           ...summary,
           albums: nextVisibleAlbums.length,
-          durationGaps: nextMissingDurations.length,
         }
       : summary;
 
     setGeneratedResult(nextGeneratedResult);
     setMissingArtwork(nextMissingArtwork);
-    setMissingDurations(nextMissingDurations);
+    setMissingAlbumMetadata(nextMissingAlbumMetadata);
     setRenderedAlbums(nextRenderedAlbums);
     setResultsCopy(buildResultsCopy(trimmedUsername, settings.rankingMode, nextRenderedAlbums.length));
     setSummary(nextSummary);
     syncGeneratedResultCache({
       ...nextGeneratedResult,
       missingArtwork: nextMissingArtwork,
-      missingDurations: nextMissingDurations,
+      missingAlbumMetadata: nextMissingAlbumMetadata,
       summary: nextSummary,
     });
     setStatus({
@@ -1018,6 +709,8 @@ function App() {
       album: albumEditDraft.album.trim(),
       artist: albumEditDraft.artist.trim(),
       imageUrl: albumEditDraft.imageUrl.trim(),
+      trackCountInput: albumEditDraft.trackCountInput.trim(),
+      albumDurationInput: albumEditDraft.albumDurationInput.trim(),
     };
 
     if (!trimmedDraft.album || !trimmedDraft.artist) {
@@ -1062,12 +755,20 @@ function App() {
           }
         : candidate,
     );
+
+    if (generatedResult.query.rankingMode === "listening-time") {
+      applyCachedAlbumMetadata(nextSortedAlbums);
+      computeListeningTimes(nextSortedAlbums);
+    }
+
     const nextVisibleAlbums = getVisibleAlbums(
       nextSortedAlbums,
       generatedResult.hiddenAlbumSourceKeys,
     );
     const nextMissingArtwork = getMissingArtworkEntries(nextVisibleAlbums);
-    const nextMissingDurations = getMissingDurationEntries(nextVisibleAlbums);
+    const nextMissingAlbumMetadata = generatedResult.query.rankingMode === "listening-time"
+      ? getMissingAlbumMetadataEntries(nextVisibleAlbums)
+      : [];
     const nextRenderedAlbums = nextVisibleAlbums.slice(0, rows * columns);
 
     const nextGeneratedResult = {
@@ -1078,13 +779,12 @@ function App() {
       ? {
           ...summary,
           albums: nextVisibleAlbums.length,
-          durationGaps: nextMissingDurations.length,
         }
       : summary;
 
     setGeneratedResult(nextGeneratedResult);
     setMissingArtwork(nextMissingArtwork);
-    setMissingDurations(nextMissingDurations);
+    setMissingAlbumMetadata(nextMissingAlbumMetadata);
     setRenderedAlbums(nextRenderedAlbums);
     setResultsCopy(
       nextRenderedAlbums.length > 0
@@ -1095,7 +795,7 @@ function App() {
     syncGeneratedResultCache({
       ...nextGeneratedResult,
       missingArtwork: nextMissingArtwork,
-      missingDurations: nextMissingDurations,
+      missingAlbumMetadata: nextMissingAlbumMetadata,
       summary: nextSummary,
     });
     setStatus({
@@ -1107,24 +807,31 @@ function App() {
 
   function handleAlbumEditSave() {
     const trimmedDraft = validateAlbumEditDraft();
-    if (!trimmedDraft || !editingAlbum) {
+    if (!trimmedDraft || !editingAlbum) return;
+
+    const trackCount = trimmedDraft.trackCountInput
+      ? Number(trimmedDraft.trackCountInput)
+      : null;
+    const albumDurationMs = trimmedDraft.albumDurationInput
+      ? parseTrackDurationInput(trimmedDraft.albumDurationInput)
+      : null;
+
+    if (trimmedDraft.trackCountInput && (!trackCount || !Number.isFinite(trackCount) || trackCount <= 0)) {
+      setStatus({ tone: "error", message: "Track count must be a positive whole number." });
       return;
     }
 
-    for (const track of albumTrackDrafts) {
-      const parsedDuration = parseTrackDurationInput(track.durationInput);
-      if (track.durationInput.trim() && parsedDuration === null) {
-        setStatus({
-          tone: "error",
-          message: `Enter track durations in mm:ss format for ${track.name}.`,
-        });
-        return;
-      }
-
-      if (parsedDuration !== null) {
-        saveTrackDurationOverride(track, parsedDuration);
-      }
+    if (trimmedDraft.albumDurationInput && albumDurationMs === null) {
+      setStatus({ tone: "error", message: "Enter album duration in mm:ss format." });
+      return;
     }
+
+    if (trackCount !== null && albumDurationMs !== null) {
+      saveAlbumMetadata(editingAlbum, { trackCount, albumDurationMs });
+      editingAlbum.trackCount = trackCount;
+      editingAlbum.albumDurationMs = albumDurationMs;
+    }
+
     saveAlbumOverride(editingAlbum, trimmedDraft);
     applyAlbumEditDraft(trimmedDraft);
   }
@@ -1170,6 +877,43 @@ function App() {
       });
     } finally {
       setIsRefreshingAlbumArtwork(false);
+    }
+  }
+
+  async function handleFetchAlbumInfo() {
+    const apiKey = getApiKey();
+    if (!editingAlbum || !apiKey) return;
+    setIsFetchingAlbumInfo(true);
+    try {
+      const result = await fetchAlbumMetadata(editingAlbum, apiKey);
+      if (!result) {
+        setStatus({ tone: "error", message: "No track data found for this album." });
+        return;
+      }
+      const durationMins = Math.floor(result.albumDurationMs / 60000);
+      const durationSecs = Math.floor((result.albumDurationMs % 60000) / 1000);
+      const durationStr = `${durationMins}:${String(durationSecs).padStart(2, "0")}`;
+      setAlbumEditDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              trackCountInput: String(result.trackCount),
+              albumDurationInput: durationStr,
+            }
+          : prev,
+      );
+      setStatus({
+        tone: "success",
+        message: `Found ${result.trackCount} tracks for ${editingAlbum.album}.`,
+      });
+    } catch (error) {
+      console.error(error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Failed to fetch album info.",
+      });
+    } finally {
+      setIsFetchingAlbumInfo(false);
     }
   }
 
@@ -1307,7 +1051,16 @@ function App() {
                   onChange={(event) => handleRankingModeChange(event.target.value as RankingMode)}
                   disabled={isBusy}
                 />
-                <span>Approximate listening time per album</span>
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>Approximate listening time per album</span>
+                  <button
+                    type="button"
+                    className="text-sm text-accent underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onClick={() => setShowListeningTimeInfo(true)}
+                  >
+                    How is this calculated?
+                  </button>
+                </span>
               </label>
             </fieldset>
 
@@ -1359,10 +1112,7 @@ function App() {
           </form>
 
           {!isProgressOverlayVisible ? <StatusBanner status={status} /> : null}
-          <SummaryPanel
-            summary={visibleSummary}
-            showDurationGaps={hasAttemptedListeningTimeForCurrentRange}
-          />
+          <SummaryPanel summary={visibleSummary} />
         </section>
 
         <section className={sectionPanelClass}>
@@ -1432,9 +1182,7 @@ function App() {
           ) : previewMode === "missing-data" ? (
             <MissingDataPanel
               items={missingDataAlbums}
-              isRefreshingDurations={isRefreshingAlbumTracks}
               onOpenAlbum={handleAlbumEditOpen}
-              onRefreshMissingDurations={() => void handleMissingDurationRefresh()}
             />
           ) : (
             <ExportPreview
@@ -1451,10 +1199,8 @@ function App() {
           draft={albumEditDraft}
           album={editingAlbum}
           activeTab={albumEditTab}
-          trackDrafts={albumTrackDrafts}
-          isLoadingTracks={isLoadingAlbumTracks}
+          isFetchingAlbumInfo={isFetchingAlbumInfo}
           isRefreshingArtwork={isRefreshingAlbumArtwork}
-          isRefreshingTracks={isRefreshingAlbumTracks}
           onChange={(key, value) =>
             setAlbumEditDraft((current) =>
               current
@@ -1465,25 +1211,16 @@ function App() {
                 : current,
             )
           }
-          onTrackDurationChange={(trackKey, value) =>
-            setAlbumTrackDrafts((current) =>
-              current.map((track) =>
-                track.trackKey === trackKey
-                  ? {
-                      ...track,
-                      durationInput: value,
-                    }
-                  : track,
-              ),
-            )
-          }
           onClose={handleAlbumEditClose}
+          onFetchAlbumInfo={() => void handleFetchAlbumInfo()}
           onRemoveAlbum={handleAlbumRemove}
           onRefreshArtwork={() => void handleAlbumArtworkRefresh()}
-          onRefreshTrackData={() => void handleAlbumTrackRefresh()}
-          onTabChange={(nextTab) => void handleAlbumEditTabChange(nextTab)}
+          onTabChange={(nextTab) => handleAlbumEditTabChange(nextTab)}
           onSave={handleAlbumEditSave}
         />
+      ) : null}
+      {showListeningTimeInfo ? (
+        <ListeningTimeInfoModal onClose={() => setShowListeningTimeInfo(false)} />
       ) : null}
       {isProgressOverlayVisible ? <ProgressOverlay status={status} /> : null}
     </div>
@@ -1583,22 +1320,98 @@ function ProgressOverlay({ status }: ProgressOverlayProps) {
 
 interface SummaryPanelProps {
   summary: SummaryState | null;
-  showDurationGaps: boolean;
 }
+
+function ListeningTimeInfoModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-20 grid place-items-center overflow-y-auto bg-surface-backdrop/80 p-4"
+      role="presentation"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className={`max-h-[calc(100vh-2rem)] w-full max-w-[640px] overflow-y-auto rounded-panel border ${edgeBorderClass} bg-surface p-5 shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface))]`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="How is approximate listening time calculated?"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <h2 className="text-2xl font-semibold text-foreground">How is this calculated?</h2>
+          <button type="button" className={secondaryButtonClass} onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-5 text-muted">
+          <section className="grid gap-2">
+            <h3 className="font-semibold text-foreground">The formula</h3>
+            <p>
+              For each album, we estimate how many times you&apos;ve played it through completely
+              by dividing your scrobble count by the album&apos;s track count. That fraction is
+              then multiplied by the album&apos;s total runtime to get approximate listening time.
+            </p>
+            <p className="rounded-xl bg-foreground/[0.04] px-4 py-3 font-mono text-sm">
+              (scrobbles ÷ track count) × album runtime
+            </p>
+            <p>
+              For example, if you have 15 scrobbles for a 10-track album that runs 45 minutes,
+              that&apos;s 1.5 full plays — roughly 67 minutes of listening time.
+            </p>
+          </section>
+
+          <section className="grid gap-2">
+            <h3 className="font-semibold text-foreground">What data is needed</h3>
+            <p>
+              Each album requires a track count and total runtime. These aren&apos;t included in
+              the standard Last.fm top albums response, so you&apos;ll need to provide them — either
+              by fetching from Last.fm or entering them manually.
+            </p>
+          </section>
+
+          <section className="grid gap-2">
+            <h3 className="font-semibold text-foreground">How to fill in missing data</h3>
+            <ol className="grid list-decimal gap-2 pl-5">
+              <li>
+                Generate your collage in <strong className="text-foreground">Approximate listening time</strong> mode.
+                A <strong className="text-foreground">Missing data</strong> tab will appear in the results panel
+                listing any albums that need track count and duration info.
+              </li>
+              <li>
+                Click an album in that list to open the edit panel, then switch to
+                the <strong className="text-foreground">Listening time</strong> tab.
+              </li>
+              <li>
+                Click <strong className="text-foreground">Fetch from Last.fm</strong> to try auto-populating
+                the track count and album duration from Last.fm&apos;s album info.
+              </li>
+              <li>
+                If the fetch doesn&apos;t return data (or returns incorrect data), you can enter the
+                values manually — track count and duration in <strong className="text-foreground">mm:ss</strong> format.
+                Wikipedia or the album&apos;s back cover are good references.
+              </li>
+              <li>
+                Click <strong className="text-foreground">Save changes</strong> when done. The collage will
+                update automatically.
+              </li>
+            </ol>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 interface AlbumEditModalProps {
   album: AlbumEntry;
   activeTab: AlbumEditTab;
   draft: AlbumEditDraft;
-  trackDrafts: AlbumTrackDraft[];
-  isLoadingTracks: boolean;
+  isFetchingAlbumInfo: boolean;
   isRefreshingArtwork: boolean;
-  isRefreshingTracks: boolean;
   onChange: (key: keyof AlbumEditDraft, value: string) => void;
-  onTrackDurationChange: (trackKey: string, value: string) => void;
   onClose: () => void;
+  onFetchAlbumInfo: () => void;
   onRefreshArtwork: () => void;
-  onRefreshTrackData: () => void;
   onRemoveAlbum: () => void;
   onTabChange: (nextTab: AlbumEditTab) => void;
   onSave: () => void;
@@ -1608,15 +1421,12 @@ function AlbumEditModal({
   album,
   activeTab,
   draft,
-  trackDrafts,
-  isLoadingTracks,
+  isFetchingAlbumInfo,
   isRefreshingArtwork,
-  isRefreshingTracks,
   onChange,
-  onTrackDurationChange,
   onClose,
+  onFetchAlbumInfo,
   onRefreshArtwork,
-  onRefreshTrackData,
   onRemoveAlbum,
   onTabChange,
   onSave,
@@ -1649,8 +1459,8 @@ function AlbumEditModal({
             role="tab"
             aria-selected={activeTab === "details"}
             className={classNames(
-              secondaryButtonClass,
-              activeTab === "details" && "border-accent bg-foreground/8",
+              toggleButtonBaseClass,
+              activeTab === "details" ? toggleButtonActiveClass : toggleButtonInactiveClass,
             )}
             onClick={() => onTabChange("details")}
           >
@@ -1661,12 +1471,12 @@ function AlbumEditModal({
             role="tab"
             aria-selected={activeTab === "tracks"}
             className={classNames(
-              secondaryButtonClass,
-              activeTab === "tracks" && "border-accent bg-foreground/8",
+              toggleButtonBaseClass,
+              activeTab === "tracks" ? toggleButtonActiveClass : toggleButtonInactiveClass,
             )}
             onClick={() => onTabChange("tracks")}
           >
-            Track information
+            Listening time
           </button>
         </div>
         {activeTab === "details" ? (
@@ -1732,63 +1542,44 @@ function AlbumEditModal({
           </div>
         ) : (
           <div className="mt-4 grid gap-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <a
+            <p className="text-muted">
+              Provide the track count and total runtime for this album. These are used to estimate how much time you spent listening.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="grid gap-1.5">
+                <span>Track count</span>
+                <input
+                  className={fieldClass}
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="e.g. 12"
+                  value={draft.trackCountInput}
+                  onChange={(event) => onChange("trackCountInput", event.target.value)}
+                />
+              </label>
+              <label className="grid gap-1.5">
+                <span>Album duration</span>
+                <input
+                  className={fieldClass}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="mm:ss (e.g. 45:00)"
+                  value={draft.albumDurationInput}
+                  onChange={(event) => onChange("albumDurationInput", event.target.value)}
+                />
+              </label>
+            </div>
+            <div>
+              <button
                 className={secondaryButtonClass}
-                href={buildMusicBrainzAlbumUrl({
-                  artist: album.sourceArtist,
-                  album: album.sourceAlbum,
-                })}
-                target="_blank"
-                rel="noreferrer"
+                type="button"
+                disabled={isFetchingAlbumInfo}
+                onClick={onFetchAlbumInfo}
               >
-                Open album on MusicBrainz
-              </a>
-              <button className={secondaryButtonClass} type="button" onClick={onRefreshTrackData} disabled={isRefreshingTracks}>
-                {isRefreshingTracks ? "Refreshing track data..." : "Refresh track data"}
+                {isFetchingAlbumInfo ? "Fetching…" : "Fetch from Last.fm"}
               </button>
             </div>
-            {isLoadingTracks ? (
-              <div className={classNames(emptyStateClass, "min-h-[180px]")}>
-                <p>Loading track information...</p>
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                {trackDrafts.map((track) => (
-                  <div
-                    key={track.trackKey}
-                    className="grid items-end gap-3 rounded-2xl border border-border/12 bg-foreground/[0.03] p-3.5 [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)] lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end"
-                  >
-                    <div className="grid gap-1">
-                      <strong>{track.name}</strong>
-                      <span className="text-[0.82rem] text-muted">
-                        {track.plays === 1 ? "1 play" : `${track.plays} plays`}
-                      </span>
-                    </div>
-                    <label className="grid gap-1.5">
-                      <span>Duration</span>
-                      <input
-                        className={classNames(fieldClass, "w-28")}
-                        type="text"
-                        inputMode="numeric"
-                        aria-label={`Duration for ${track.name}`}
-                        placeholder="00:00"
-                        value={track.durationInput}
-                        onChange={(event) => onTrackDurationChange(track.trackKey, event.target.value)}
-                      />
-                    </label>
-                    <a
-                      className={secondaryButtonClass}
-                      href={buildMusicBrainzTrackUrl(track)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Update on MusicBrainz
-                    </a>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
         <div className="mt-4 flex justify-end gap-4">
@@ -1806,16 +1597,12 @@ function AlbumEditModal({
 
 interface MissingDataPanelProps {
   items: MissingDataAlbumEntry[];
-  isRefreshingDurations: boolean;
   onOpenAlbum: (album: AlbumEntry) => void;
-  onRefreshMissingDurations: () => void;
 }
 
 function MissingDataPanel({
   items,
-  isRefreshingDurations,
   onOpenAlbum,
-  onRefreshMissingDurations,
 }: MissingDataPanelProps) {
   if (items.length === 0) {
     return (
@@ -1825,28 +1612,11 @@ function MissingDataPanel({
     );
   }
 
-  const hasMissingDurations = items.some((item) => item.hasMissingDurations);
-
   return (
     <div className="mt-5 grid gap-4">
       <p className="max-w-[64ch] text-muted">
-        These albums still have missing artwork or track durations. Open an album to fix the image,
-        titles, and track data in one place.
+        These albums have missing artwork or listening time data. Open an album to fill in track count and album duration.
       </p>
-      {hasMissingDurations ? (
-        <div className="flex justify-start">
-          <button
-            className={secondaryButtonClass}
-            type="button"
-            onClick={onRefreshMissingDurations}
-            disabled={isRefreshingDurations}
-          >
-            {isRefreshingDurations
-              ? "Fetching missing durations..."
-              : "Try fetching missing durations from MusicBrainz"}
-          </button>
-        </div>
-      ) : null}
       <div className="grid gap-3.5">
         {items.map((item) => {
           const hasVisibleArtwork = Boolean(item.album.imageUrl) && !item.hasMissingArtwork;
@@ -1883,9 +1653,9 @@ function MissingDataPanel({
                       Missing artwork
                     </span>
                   ) : null}
-                  {item.hasMissingDurations ? (
+                  {item.hasMissingMetadata ? (
                     <span className="inline-flex items-center rounded-full bg-foreground/8 px-2 py-1 text-[0.78rem] text-foreground">
-                      Missing track durations
+                      Missing listening time data
                     </span>
                   ) : null}
                 </div>
@@ -1898,7 +1668,7 @@ function MissingDataPanel({
   );
 }
 
-function SummaryPanel({ summary, showDurationGaps }: SummaryPanelProps) {
+function SummaryPanel({ summary }: SummaryPanelProps) {
   if (!summary) {
     return null;
   }
@@ -1915,14 +1685,6 @@ function SummaryPanel({ summary, showDurationGaps }: SummaryPanelProps) {
         <dt className="text-[0.85rem] text-muted">Albums found</dt>
         <dd className="mt-1 text-[1.1rem] font-bold text-foreground">{summary.albums.toLocaleString()}</dd>
       </div>
-      {showDurationGaps ? (
-        <div className={`rounded-[14px] border ${edgeBorderClass} bg-foreground/[0.03] p-3.5`}>
-          <dt className="text-[0.85rem] text-muted">Duration gaps</dt>
-          <dd className="mt-1 text-[1.1rem] font-bold text-foreground">
-            {summary.durationGaps.toLocaleString()}
-          </dd>
-        </div>
-      ) : null}
     </dl>
   );
 }
@@ -1968,13 +1730,13 @@ function PreviewGrid({
     >
       {albums.map((album, index) => {
         const hasMissingArtwork = getMissingArtworkEntries([album]).length > 0;
-        const hasMissingDurations =
-          showDurationWarnings && getMissingDurationEntries([album]).length > 0;
-        const hasWarning = hasMissingArtwork || hasMissingDurations;
+        const hasMissingMetadata =
+          showDurationWarnings && getMissingAlbumMetadataEntries([album]).length > 0;
+        const hasWarning = hasMissingArtwork || hasMissingMetadata;
         const warningClassName =
-          hasMissingArtwork && hasMissingDurations
+          hasMissingArtwork && hasMissingMetadata
             ? "has-critical-warning"
-            : hasMissingArtwork || hasMissingDurations
+            : hasMissingArtwork || hasMissingMetadata
               ? "has-warning"
               : "";
 
@@ -2191,30 +1953,18 @@ function parseTrackDurationInput(value: string): number | null {
 function buildMissingDataAlbums(
   albums: AlbumEntry[],
   missingArtwork: MissingArtworkEntry[],
-  missingDurations: MissingDurationEntry[],
+  missingAlbumMetadata: AlbumEntry[],
 ): MissingDataAlbumEntry[] {
   const missingArtworkKeys = new Set(missingArtwork.map((album) => album.sourceKey));
-  const missingDurationAlbumKeys = new Set(
-    missingDurations.map((track) => `${track.artist}::${track.album}`.toLowerCase()),
-  );
+  const missingMetadataKeys = new Set(missingAlbumMetadata.map((album) => album.sourceKey));
 
   return albums.flatMap((album) => {
     const hasMissingArtwork = missingArtworkKeys.has(album.sourceKey);
-    const hasMissingDurations = [...album.tracks.values()].some((track) =>
-      missingDurationAlbumKeys.has(`${track.artist}::${track.album}`.toLowerCase()),
-    );
+    const hasMissingMetadata = missingMetadataKeys.has(album.sourceKey);
 
-    if (!hasMissingArtwork && !hasMissingDurations) {
-      return [];
-    }
+    if (!hasMissingArtwork && !hasMissingMetadata) return [];
 
-    return [
-      {
-        album,
-        hasMissingArtwork,
-        hasMissingDurations,
-      },
-    ];
+    return [{ album, hasMissingArtwork, hasMissingMetadata }];
   });
 }
 

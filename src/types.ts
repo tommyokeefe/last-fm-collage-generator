@@ -31,23 +31,6 @@ export interface StatusState {
 export interface SummaryState {
   scrobbles: number;
   albums: number;
-  durationGaps: number;
-}
-
-export interface AlbumTrack {
-  artist: string;
-  album: string;
-  name: string;
-  plays: number;
-}
-
-export interface MissingDurationEntry extends AlbumTrack {
-  trackKey: string;
-  checkedAt: number;
-}
-
-export interface AlbumTrackDurationEntry extends MissingDurationEntry {
-  durationMs: number;
 }
 
 export interface MissingArtworkEntry {
@@ -66,10 +49,11 @@ export interface AlbumEntry {
   imageUrl: string;
   playCount: number;
   approximateListeningMs: number;
+  trackCount: number | null;
+  albumDurationMs: number | null;
   sourceArtist: string;
   sourceAlbum: string;
   sourceKey: string;
-  tracks: Map<string, AlbumTrack>;
 }
 
 export interface TimeRange {
@@ -95,32 +79,12 @@ export type LastFmTextField =
       mbid?: string;
     };
 
-export interface LastFmRecentTrack {
-  artist: LastFmTextField;
-  album: LastFmTextField;
-  name: LastFmTextField;
-  image?: LastFmImage[];
-  date?: LastFmDate;
-}
-
-export interface LastFmRecentTracksResponse {
-  recenttracks: {
-    track: LastFmRecentTrack[] | LastFmRecentTrack;
-    "@attr"?: {
-      totalPages?: string;
-    };
-  };
-}
-
-export interface LastFmTrackInfoResponse {
-  track?: {
-    duration?: string;
-  };
-}
-
 export interface LastFmAlbumInfoResponse {
   album?: {
     image?: LastFmImage[];
+    tracks?: {
+      track?: Array<{ duration?: string | number }> | { duration?: string | number };
+    };
   };
 }
 
@@ -129,14 +93,25 @@ export interface LastFmErrorResponse {
   message?: string;
 }
 
-export interface RecentTracksResult {
-  items: LastFmRecentTrack[];
-  pagesFetched: number;
+export interface LastFmTopAlbum {
+  name: LastFmTextField;
+  playcount?: string;
+  artist: LastFmTextField;
+  image?: LastFmImage[];
 }
 
-export interface RecentTracksResumeState {
-  nextPage: number;
-  totalPages: number;
+export interface LastFmTopAlbumsResponse {
+  topalbums: {
+    album: LastFmTopAlbum[] | LastFmTopAlbum;
+    "@attr"?: {
+      totalPages?: string;
+    };
+  };
+}
+
+export interface AlbumMetadata {
+  trackCount: number;
+  albumDurationMs: number;
 }
 
 export interface FetchProgressState {
@@ -153,15 +128,6 @@ export type PreviewGridStyle = CSSProperties & {
 export interface ExportRenderOptions {
   showAlbumInfo: boolean;
   showMetric: boolean;
-}
-
-export interface HydrateListeningTimesResult {
-  missingDurations: MissingDurationEntry[];
-}
-
-export interface ResolveMissingDurationsResult {
-  missingDurations: MissingDurationEntry[];
-  resolvedCount: number;
 }
 
 export interface ResolveMissingArtworkResult {
