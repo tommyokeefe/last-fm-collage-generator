@@ -37,28 +37,17 @@ import type {
 
 const SETTINGS_KEY = "lastfm-collage-settings";
 type PreviewMode = "config" | "export" | "missing-data";
-const BASE_TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
+const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "7d", label: "Last 7 days" },
   { value: "1m", label: "Last 30 days" },
-];
-const EXTENDED_TIME_RANGE_OPTIONS: ReadonlyArray<{ value: TimeRangeValue; label: string }> = [
   { value: "3m", label: "Last 90 days" },
   { value: "6m", label: "Last 180 days" },
   { value: "12m", label: "Last 365 days" },
   { value: "overall", label: "All time" },
 ];
 
-function getTimeRangeOptions(): ReadonlyArray<{ value: TimeRangeValue; label: string }> {
-  try {
-    const flag = window.localStorage.getItem("lastfm-collage-enable-extended-time-ranges");
-    if (flag === "1" || flag === "true") {
-      return [...BASE_TIME_RANGE_OPTIONS, ...EXTENDED_TIME_RANGE_OPTIONS];
-    }
-  } catch {
-    // ignore
-  }
-
-  return BASE_TIME_RANGE_OPTIONS;
+function getTimeRangeOptions() {
+  return TIME_RANGE_OPTIONS;
 }
 const GRID_OPTIONS: ReadonlyArray<GridSize> = [
   "3x3",
