@@ -3,25 +3,23 @@ describe("Last.fm collage generator", () => {
     cy.intercept("GET", "https://ws.audioscrobbler.com/2.0/?*", (request) => {
       const method = request.query.method;
 
-      if (method === "user.getrecenttracks") {
+      if (method === "user.gettopalbums") {
         request.reply({
           statusCode: 200,
           body: {
-            recenttracks: {
-              track: [
+            topalbums: {
+              album: [
                 {
+                  name: "Album A",
+                  playcount: "50",
                   artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
                   image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
                 },
                 {
+                  name: "Album B",
+                  playcount: "30",
                   artist: { name: "Artist Two" },
-                  album: { "#text": "Album B" },
-                  name: "Track 2",
                   image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
-                  date: { uts: "456" },
                 },
               ],
               "@attr": { totalPages: "1" },
@@ -31,14 +29,7 @@ describe("Last.fm collage generator", () => {
         return;
       }
 
-      request.reply({
-        statusCode: 200,
-        body: {
-          track: {
-            duration: "240000",
-          },
-        },
-      });
+      request.reply({ statusCode: 200, body: {} });
     }).as("lastfm");
 
     cy.visit("/");

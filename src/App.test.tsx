@@ -17,6 +17,20 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+function makeTopAlbumsResponse(albums: Array<{ name: string; playcount: string; artist: string; imageUrl: string }>, totalPages = "1") {
+  return {
+    topalbums: {
+      album: albums.map((a) => ({
+        name: a.name,
+        playcount: a.playcount,
+        artist: { name: a.artist },
+        image: [{ "#text": "" }, { "#text": a.imageUrl }],
+      })),
+      "@attr": { totalPages },
+    },
+  };
+}
+
 describe("App", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -48,24 +62,13 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders a preview from mocked recent tracks", async () => {
+  it("renders a preview from mocked top albums", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -82,7 +85,6 @@ describe("App", () => {
     });
 
     expect(screen.getByText("Album A")).toBeInTheDocument();
-    expect(screen.queryByText("#1")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export PNG" })).toBeEnabled();
   });
 
@@ -100,24 +102,13 @@ describe("App", () => {
 
     const progressDialog = screen.getByRole("dialog", { name: "Operation in progress" });
     expect(progressDialog).toBeInTheDocument();
-    expect(within(progressDialog).getByText(/Fetching listening history from Last\.fm\.\.\./)).toBeInTheDocument();
+    expect(within(progressDialog).getByText(/Fetching top albums from Last\.fm\.\.\./)).toBeInTheDocument();
 
     fetchDeferred.resolve(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -131,32 +122,15 @@ describe("App", () => {
   it("refreshes album artwork and saves modal edits to the local cache", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const refreshedArtworkRequest = createDeferred<Response>();
-    const recentTracksResponse = new Response(
-      JSON.stringify({
-        recenttracks: {
-          track: [
-            {
-              artist: { name: "Artist One" },
-              album: { "#text": "Album A" },
-              name: "Track 1",
-              image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-              date: { uts: "123" },
-            },
-            {
-              artist: { name: "Artist Two" },
-              album: { "#text": "Album B" },
-              name: "Track 2",
-              image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
-              date: { uts: "456" },
-            },
-          ],
-          "@attr": { totalPages: "1" },
-        },
-      }),
+    const topAlbumsResponse = new Response(
+      JSON.stringify(makeTopAlbumsResponse([
+        { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        { name: "Album B", playcount: "5", artist: "Artist Two", imageUrl: "https://example.com/b.jpg" },
+      ])),
       { status: 200 },
     );
     const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(recentTracksResponse.clone())
+      .mockResolvedValueOnce(topAlbumsResponse.clone())
       .mockReturnValueOnce(refreshedArtworkRequest.promise);
 
     const { unmount } = render(<App />);
@@ -224,7 +198,7 @@ describe("App", () => {
     unmount();
 
     fetchSpy.mockReset();
-    fetchSpy.mockResolvedValueOnce(recentTracksResponse.clone());
+    fetchSpy.mockResolvedValueOnce(topAlbumsResponse.clone());
 
     render(<App />);
 
@@ -240,34 +214,17 @@ describe("App", () => {
       "src",
       "https://example.com/refreshed.jpg",
     );
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("removes an album from the collage and restores it from the configuration view", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-              {
-                artist: { name: "Artist Two" },
-                album: { "#text": "Album B" },
-                name: "Track 2",
-                image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
-                date: { uts: "456" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+          { name: "Album B", playcount: "5", artist: "Artist Two", imageUrl: "https://example.com/b.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -313,34 +270,20 @@ describe("App", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("loads and saves track durations from the album information modal", async () => {
+  it("saves album metadata from the listening time tab", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "1" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "180000" } }), { status: 200 }),
-      );
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
+        { status: 200 },
+      ),
+    );
 
     render(<App />);
 
+    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
     fireEvent.change(screen.getByLabelText("Last.fm username"), {
       target: { value: "tommy" },
     });
@@ -351,20 +294,16 @@ describe("App", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Track information" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Listening time" }));
 
-    await waitFor(() => {
-      expect(screen.getByText("Fetched track data for Album A.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("e.g. 12")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("mm:ss (e.g. 45:00)")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. 12"), {
+      target: { value: "10" },
     });
-
-    expect(screen.getByDisplayValue("03:00")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open album on MusicBrainz" })).toHaveAttribute(
-      "href",
-      "https://musicbrainz.org/search?query=Album+A+Artist+One&type=release&method=indexed",
-    );
-
-    fireEvent.change(screen.getByLabelText("Duration for Track 1"), {
-      target: { value: "04:05" },
+    fireEvent.change(screen.getByPlaceholderText("mm:ss (e.g. 45:00)"), {
+      target: { value: "40:00" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -373,40 +312,25 @@ describe("App", () => {
     });
 
     expect(
-      JSON.parse(window.localStorage.getItem("lastfm-collage-duration-cache") ?? "{}"),
+      JSON.parse(window.localStorage.getItem("lastfm-collage-album-metadata-cache") ?? "{}"),
     ).toMatchObject({
-      "artist one::track 1": {
-        duration: 245000,
+      "artist one::album a": {
+        trackCount: 10,
+        albumDurationMs: 2400000,
       },
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("does not show missing duration data before listening-time mode has been generated", async () => {
+  it("does not show missing metadata before listening-time mode has been generated", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "1" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
-      );
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
+        { status: 200 },
+      ),
+    );
 
     render(<App />);
 
@@ -417,91 +341,18 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Track information" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Fetched track data for Album A.")).toBeInTheDocument();
     });
 
     expect(screen.queryByRole("button", { name: /Missing data \(/ })).not.toBeInTheDocument();
-    expect(screen.queryByText("Duration gaps")).not.toBeInTheDocument();
-  });
-
-  it("shows the progress overlay above the album modal while track data is loading", async () => {
-    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    const trackFetchDeferred = createDeferred<Response>();
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "1" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockImplementationOnce(() => trackFetchDeferred.promise);
-
-    render(<App />);
-
-    fireEvent.change(screen.getByLabelText("Last.fm username"), {
-      target: { value: "tommy" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Track information" }));
-
-    expect(screen.getByRole("dialog", { name: "Edit album information" })).toBeInTheDocument();
-    const progressDialog = screen.getByRole("dialog", { name: "Operation in progress" });
-    expect(progressDialog).toBeInTheDocument();
-    expect(within(progressDialog).getByText("Fetching track durations for Album A...")).toBeInTheDocument();
-
-    trackFetchDeferred.resolve(
-      new Response(JSON.stringify({ track: { duration: "180000" } }), { status: 200 }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Fetched track data for Album A.")).toBeInTheDocument();
-    });
-    expect(screen.queryByRole("dialog", { name: "Operation in progress" })).not.toBeInTheDocument();
   });
 
   it("toggles to an exact PNG preview", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -541,20 +392,9 @@ describe("App", () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -600,20 +440,9 @@ describe("App", () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -650,20 +479,9 @@ describe("App", () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -692,46 +510,23 @@ describe("App", () => {
 
   it("reuses cached generated results when switching ranking modes for the same time range", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    const recentTracksResponse = new Response(
-      JSON.stringify({
-        recenttracks: {
-          track: [
-            {
-              artist: { name: "Artist One" },
-              album: { "#text": "Album A" },
-              name: "Track 1",
-              image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-              date: { uts: "123" },
-            },
-            {
-              artist: { name: "Artist One" },
-              album: { "#text": "Album A" },
-              name: "Track 1",
-              image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-              date: { uts: "124" },
-            },
-            {
-              artist: { name: "Artist Two" },
-              album: { "#text": "Album B" },
-              name: "Track 2",
-              image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
-              date: { uts: "125" },
-            },
-          ],
-          "@attr": { totalPages: "1" },
-        },
-      }),
+    const playsResponse = new Response(
+      JSON.stringify(makeTopAlbumsResponse([
+        { name: "Album A", playcount: "20", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        { name: "Album B", playcount: "10", artist: "Artist Two", imageUrl: "https://example.com/b.jpg" },
+      ])),
+      { status: 200 },
+    );
+    const listeningTimeResponse = new Response(
+      JSON.stringify(makeTopAlbumsResponse([
+        { name: "Album A", playcount: "20", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        { name: "Album B", playcount: "10", artist: "Artist Two", imageUrl: "https://example.com/b.jpg" },
+      ])),
       { status: 200 },
     );
     const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(recentTracksResponse.clone())
-      .mockResolvedValueOnce(recentTracksResponse.clone())
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "100000" } }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "300000" } }), { status: 200 }),
-      );
+      .mockResolvedValueOnce(playsResponse.clone())
+      .mockResolvedValueOnce(listeningTimeResponse.clone());
 
     render(<App />);
 
@@ -762,7 +557,7 @@ describe("App", () => {
       ).toBeInTheDocument();
     });
 
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByLabelText("Most plays per album"));
 
@@ -804,7 +599,7 @@ describe("App", () => {
       );
     });
 
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("shows fetch progress and an ETA while loading multiple pages", async () => {
@@ -818,20 +613,9 @@ describe("App", () => {
         now = 2000;
         return Promise.resolve(
           new Response(
-            JSON.stringify({
-              recenttracks: {
-                track: [
-                  {
-                    artist: { name: "Artist One" },
-                    album: { "#text": "Album A" },
-                    name: "Track 1",
-                    image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                    date: { uts: "123" },
-                  },
-                ],
-                "@attr": { totalPages: "2" },
-              },
-            }),
+            JSON.stringify(makeTopAlbumsResponse([
+              { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+            ], "2")),
             { status: 200 },
           ),
         );
@@ -860,20 +644,9 @@ describe("App", () => {
 
     resolveSecondPage?.(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "456" },
-              },
-            ],
-            "@attr": { totalPages: "2" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album B", playcount: "5", artist: "Artist Two", imageUrl: "https://example.com/b.jpg" },
+        ], "2")),
         { status: 200 },
       ),
     );
@@ -883,36 +656,21 @@ describe("App", () => {
     });
   });
 
-  it("highlights albums with missing artwork and duration gaps in configuration view", async () => {
+  it("highlights albums with missing artwork and missing metadata in configuration view", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [
-                    {
-                      "#text":
-                        "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
-                    },
-                  ],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "1" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
-      );
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify(makeTopAlbumsResponse([
+          {
+            name: "Album A",
+            playcount: "10",
+            artist: "Artist One",
+            imageUrl: "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
+          },
+        ])),
+        { status: 200 },
+      ),
+    );
 
     const { container } = render(<App />);
 
@@ -929,120 +687,13 @@ describe("App", () => {
     expect(container.querySelector(".tile-warning-icon")).toBeInTheDocument();
   });
 
-  it("shows a two-step progress flow for listening-time mode", async () => {
-    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-
-    let resolveSecondPage: ((value: Response) => void) | undefined;
-    let resolveDuration: ((value: Response) => void) | undefined;
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "2" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveSecondPage = resolve;
-          }),
-      )
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveDuration = resolve;
-          }),
-      );
-
-    render(<App />);
-
-    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
-    fireEvent.change(screen.getByLabelText("Last.fm username"), {
-      target: { value: "tommy" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/Step 1 of 2: Fetching listening history from Last\.fm\.\.\. page/),
-      ).toBeInTheDocument();
-    });
-    expect(screen.getByText("Pages 1 of 2")).toBeInTheDocument();
-
-    resolveSecondPage?.(
-      new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "456" },
-              },
-            ],
-            "@attr": { totalPages: "2" },
-          },
-        }),
-        { status: 200 },
-      ),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Step 2 of 2: Fetching track durations from Last.fm... 0 of 1")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("Tracks 0 of 1")).toBeInTheDocument();
-    expect(screen.getByText("ETA calculating...")).toBeInTheDocument();
-
-    resolveDuration?.(
-      new Response(
-        JSON.stringify({
-          track: {
-            duration: "180000",
-          },
-        }),
-        { status: 200 },
-      ),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
-    });
-  });
-
   it("supports selecting a 10 x 10 grid", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -1074,94 +725,13 @@ describe("App", () => {
     );
   });
 
-  it("retries a failed fetch from the saved page checkpoint", async () => {
-    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    fetchSpy
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "2" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockRejectedValueOnce(new Error("Network down"))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist Two" },
-                  album: { "#text": "Album B" },
-                  name: "Track 2",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/b.jpg" }],
-                  date: { uts: "456" },
-                },
-              ],
-              "@attr": { totalPages: "2" },
-            },
-          }),
-          { status: 200 },
-        ),
-      );
-
-    render(<App />);
-
-    fireEvent.change(screen.getByLabelText("Last.fm username"), {
-      target: { value: "tommy" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText("Network down Retry Generate to resume from page 2 of 2."),
-      ).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Collage generated successfully.")).toBeInTheDocument();
-    });
-
-    expect(fetchSpy).toHaveBeenNthCalledWith(
-      3,
-      expect.stringContaining("page=2"),
-    );
-  });
-
   it("reuses cached generated results when only the grid size changes", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -1205,20 +775,9 @@ describe("App", () => {
     const nextPreview = createDeferred<Blob>();
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
         { status: 200 },
       ),
     );
@@ -1261,31 +820,16 @@ describe("App", () => {
     expect(screen.queryByText("Regenerating the exact PNG preview...")).not.toBeInTheDocument();
   });
 
-  it("shows a unified missing data tab for albums with missing durations", async () => {
+  it("shows a unified missing data tab for albums with missing metadata in listening-time mode", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "1" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
-      );
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify(makeTopAlbumsResponse([
+          { name: "Album A", playcount: "10", artist: "Artist One", imageUrl: "https://example.com/a.jpg" },
+        ])),
+        { status: 200 },
+      ),
+    );
 
     render(<App />);
 
@@ -1300,191 +844,24 @@ describe("App", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Missing data (1)" }));
-    expect(screen.getByText("Missing track durations")).toBeInTheDocument();
+    expect(screen.getByText("Missing listening time data")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit Album A by Artist One" }));
     expect(screen.getByRole("dialog", { name: "Edit album information" })).toBeInTheDocument();
-
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-  });
-
-  it("tries to fetch missing durations from MusicBrainz in the missing data view", async () => {
-    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "1" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recordings: [
-              {
-                title: "Track 1",
-                length: 181000,
-                score: "100",
-                releases: [{ title: "Album A" }],
-                "artist-credit": [{ name: "Artist One" }],
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      );
-
-    render(<App />);
-
-    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
-    fireEvent.change(screen.getByLabelText("Last.fm username"), {
-      target: { value: "tommy" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Missing data (1)" })).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Missing data (1)" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Try fetching missing durations from MusicBrainz" }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Recovered 1 track duration from MusicBrainz.")).toBeInTheDocument();
-    });
-
-    expect(
-      JSON.parse(window.localStorage.getItem("lastfm-collage-duration-cache") ?? "{}"),
-    ).toMatchObject({
-      "artist one::track 1": {
-        duration: 181000,
-      },
-    });
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-  });
-
-  it("only asks MusicBrainz for tracks whose current duration is still zero", async () => {
-    vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 2",
-                  image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "124" },
-                },
-              ],
-              "@attr": { totalPages: "1" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ track: { duration: "240000" } }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recordings: [
-              {
-                title: "Track 1",
-                length: 181000,
-                score: "100",
-                releases: [{ title: "Album A" }],
-                "artist-credit": [{ name: "Artist One" }],
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      );
-
-    render(<App />);
-
-    fireEvent.click(screen.getByLabelText("Approximate listening time per album"));
-    fireEvent.change(screen.getByLabelText("Last.fm username"), {
-      target: { value: "tommy" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Generate collage" }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Missing data (1)" })).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Missing data (1)" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Try fetching missing durations from MusicBrainz" }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Recovered 1 track duration from MusicBrainz.")).toBeInTheDocument();
-    });
-
-    const lastFetchUrl = fetchSpy.mock.calls.at(-1)?.[0];
-
-    expect(fetchSpy).toHaveBeenCalledTimes(4);
-    expect(typeof lastFetchUrl).toBe("string");
-    expect(lastFetchUrl).toContain('recording%3A%22Track+1%22');
-    expect(lastFetchUrl).not.toContain('recording%3A%22Track+2%22');
   });
 
   it("shows a unified missing data tab for albums with missing artwork", async () => {
     vi.stubEnv("VITE_LASTFM_API_KEY", "test-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [
-                  {
-                    "#text":
-                      "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
-                  },
-                ],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
+        JSON.stringify(makeTopAlbumsResponse([
+          {
+            name: "Album A",
+            playcount: "10",
+            artist: "Artist One",
+            imageUrl: "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
           },
-        }),
+        ])),
         { status: 200 },
       ),
     );

@@ -1,881 +1,278 @@
 import {
-  aggregateAlbums,
+  applyCachedAlbumMetadata,
   applyCachedAlbumOverrides,
-  applyCachedArtwork,
-  buildMusicBrainzAlbumUrl,
-  buildLastFmAlbumUrl,
-  buildTimeRange,
-  buildMusicBrainzTrackUrl,
+  computeListeningTimes,
   createRequestScheduler,
-  fetchMissingArtworkFromMusicBrainz,
-  fetchMissingDurationsFromMusicBrainz,
-  fetchRecentTracks,
+  fetchTopAlbums,
   formatMetric,
-  getAlbumTrackDurationEntries,
+  getMissingAlbumMetadataEntries,
   getMissingArtworkEntries,
-  getRecentTracksResumeState,
-  hydrateApproximateListeningTimes,
-  refreshAlbumTrackDurationsFromMusicBrainz,
-  refreshAlbumArtwork,
+  saveAlbumMetadata,
   saveAlbumOverride,
-  saveAlbumArtworkOverride,
   sortAlbums,
 } from "./lastfm";
-import type { AlbumEntry, LastFmRecentTrack } from "../types";
+import type { AlbumEntry, LastFmTopAlbumsResponse } from "../types";
 
-describe("lastfm helpers", () => {
-  afterEach(() => {
-    window.localStorage.clear();
-    vi.restoreAllMocks();
+function makeAlbum(overrides: Partial<AlbumEntry> = {}): AlbumEntry {
+  return {
+    artist: "Artist",
+    artistNames: new Set(["Artist"]),
+    album: "Album",
+    imageUrl: "https://example.com/cover.jpg",
+    playCount: 10,
+    approximateListeningMs: 0,
+    trackCount: null,
+    albumDurationMs: null,
+    sourceArtist: "Artist",
+    sourceAlbum: "Album",
+    sourceKey: "artist::album",
+    ...overrides,
+  };
+}
+
+describe("computeListeningTimes", () => {
+  it("computes approximateListeningMs correctly", () => {
+    const album = makeAlbum({ playCount: 10, trackCount: 10, albumDurationMs: 60000 });
+    computeListeningTimes([album]);
+    expect(album.approximateListeningMs).toBe(60000);
   });
 
-  it("returns a bounded 7 day range with timestamps", () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_000_000);
-
-    expect(buildTimeRange("7d")).toEqual({
-      label: "7d",
-      from: Math.floor(1_000_000 / 1000) - 7 * 24 * 60 * 60,
-      to: Math.floor(1_000_000 / 1000),
-    });
+  it("computes proportionally when playCount < trackCount", () => {
+    const album = makeAlbum({ playCount: 5, trackCount: 10, albumDurationMs: 60000 });
+    computeListeningTimes([album]);
+    expect(album.approximateListeningMs).toBe(30000);
   });
 
-  it("aggregates albums from extended artist payloads", () => {
-    const tracks: LastFmRecentTrack[] = [
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "" }, { "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "456" },
-      },
+  it("sets approximateListeningMs to 0 when trackCount is null", () => {
+    const album = makeAlbum({ playCount: 10, trackCount: null, albumDurationMs: 60000 });
+    computeListeningTimes([album]);
+    expect(album.approximateListeningMs).toBe(0);
+  });
+
+  it("sets approximateListeningMs to 0 when albumDurationMs is null", () => {
+    const album = makeAlbum({ playCount: 10, trackCount: 10, albumDurationMs: null });
+    computeListeningTimes([album]);
+    expect(album.approximateListeningMs).toBe(0);
+  });
+
+  it("sets approximateListeningMs to 0 when trackCount is 0", () => {
+    const album = makeAlbum({ playCount: 10, trackCount: 0, albumDurationMs: 60000 });
+    computeListeningTimes([album]);
+    expect(album.approximateListeningMs).toBe(0);
+  });
+});
+
+describe("getMissingAlbumMetadataEntries", () => {
+  it("returns albums with missing trackCount", () => {
+    const album = makeAlbum({ trackCount: null, albumDurationMs: 60000 });
+    expect(getMissingAlbumMetadataEntries([album])).toHaveLength(1);
+  });
+
+  it("returns albums with missing albumDurationMs", () => {
+    const album = makeAlbum({ trackCount: 10, albumDurationMs: null });
+    expect(getMissingAlbumMetadataEntries([album])).toHaveLength(1);
+  });
+
+  it("does not return albums with complete metadata", () => {
+    const album = makeAlbum({ trackCount: 10, albumDurationMs: 60000 });
+    expect(getMissingAlbumMetadataEntries([album])).toHaveLength(0);
+  });
+
+  it("returns albums with zero trackCount", () => {
+    const album = makeAlbum({ trackCount: 0, albumDurationMs: 60000 });
+    expect(getMissingAlbumMetadataEntries([album])).toHaveLength(1);
+  });
+});
+
+describe("saveAlbumMetadata / applyCachedAlbumMetadata", () => {
+  it("round-trips metadata through localStorage", () => {
+    const album = makeAlbum({ sourceKey: "test-artist::test-album" });
+    saveAlbumMetadata(album, { trackCount: 12, albumDurationMs: 2700000 });
+
+    const restored = makeAlbum({ sourceKey: "test-artist::test-album" });
+    applyCachedAlbumMetadata([restored]);
+
+    expect(restored.trackCount).toBe(12);
+    expect(restored.albumDurationMs).toBe(2700000);
+  });
+
+  it("does not apply metadata from a different sourceKey", () => {
+    const album = makeAlbum({ sourceKey: "other-artist::other-album" });
+    saveAlbumMetadata(album, { trackCount: 5, albumDurationMs: 1000 });
+
+    const unrelated = makeAlbum({ sourceKey: "not-the-same::key" });
+    applyCachedAlbumMetadata([unrelated]);
+
+    expect(unrelated.trackCount).toBeNull();
+    expect(unrelated.albumDurationMs).toBeNull();
+  });
+});
+
+describe("sortAlbums", () => {
+  it("sorts by playCount descending in plays mode", () => {
+    const albums = [
+      makeAlbum({ album: "B", playCount: 5 }),
+      makeAlbum({ album: "A", playCount: 10 }),
     ];
-
-    const albums = aggregateAlbums(tracks);
-
-    expect(albums).toHaveLength(1);
-    expect(albums[0]).toMatchObject({
-      artist: "Artist One",
-      album: "Album A",
-      imageUrl: "https://example.com/a.jpg",
-      playCount: 2,
-    });
+    const sorted = sortAlbums(albums, "plays");
+    expect(sorted[0]!.album).toBe("A");
+    expect(sorted[1]!.album).toBe("B");
   });
 
-  it("combines the same album across multiple artists", () => {
-    const tracks: LastFmRecentTrack[] = [
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Collab Album" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/collab.jpg" }],
-        date: { uts: "123" },
-      },
-      {
-        artist: { name: "Artist Two" },
-        album: { "#text": "Collab Album" },
-        name: "Track 2",
-        image: [{ "#text": "https://example.com/collab.jpg" }],
-        date: { uts: "456" },
-      },
+  it("sorts by approximateListeningMs descending in listening-time mode", () => {
+    const albums = [
+      makeAlbum({ album: "B", approximateListeningMs: 1000, playCount: 10 }),
+      makeAlbum({ album: "A", approximateListeningMs: 2000, playCount: 5 }),
     ];
-
-    const albums = aggregateAlbums(tracks);
-
-    expect(albums).toHaveLength(1);
-    expect(albums[0]).toMatchObject({
-      artist: "Artist One, Artist Two",
-      album: "Collab Album",
-      playCount: 2,
-    });
-  });
-
-  it("keeps same-title albums separate when their cover art differs", () => {
-    const tracks: LastFmRecentTrack[] = [
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Shared Title" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/one.jpg" }],
-        date: { uts: "123" },
-      },
-      {
-        artist: { name: "Artist Two" },
-        album: { "#text": "Shared Title" },
-        name: "Track 2",
-        image: [{ "#text": "https://example.com/two.jpg" }],
-        date: { uts: "456" },
-      },
-    ];
-
-    const albums = aggregateAlbums(tracks);
-
-    expect(albums).toHaveLength(2);
-  });
-
-  it("warns when a track duration is missing", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ track: { duration: "0" } }), { status: 200 }),
-    );
-
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track Missing Duration",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    const result = await hydrateApproximateListeningTimes(albums, "test-key");
-
-    expect(result.missingDurations).toHaveLength(1);
-    expect(warnSpy).toHaveBeenCalledWith(
-      '[lastfm-duration-gap] Missing duration metadata for "Track Missing Duration" on album "Album A" by Artist One.',
-    );
-
-    fetchSpy.mockRestore();
-    warnSpy.mockRestore();
-  });
-
-  it("reuses successful cached durations without refetching", async () => {
-    window.localStorage.setItem(
-      "lastfm-collage-duration-cache",
-      JSON.stringify({
-        "artist one::track 1": {
-          duration: 180000,
-          checkedAt: 1000,
-        },
-      }),
-    );
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    await hydrateApproximateListeningTimes(albums, "test-key");
-
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(albums[0]?.approximateListeningMs).toBe(180000);
-    fetchSpy.mockRestore();
-  });
-
-  it("reuses legacy cached durations without checkedAt metadata", async () => {
-    window.localStorage.setItem(
-      "lastfm-collage-duration-cache",
-      JSON.stringify({
-        "artist one::track 1": {
-          duration: 180000,
-        },
-      }),
-    );
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    await hydrateApproximateListeningTimes(albums, "test-key");
-
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(albums[0]?.approximateListeningMs).toBe(180000);
-    fetchSpy.mockRestore();
-  });
-
-  it("retries missing durations after one hour", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(4_000_000);
-    window.localStorage.setItem(
-      "lastfm-collage-duration-cache",
-      JSON.stringify({
-        "artist one::track 1": {
-          duration: 0,
-          checkedAt: 1000,
-        },
-      }),
-    );
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ track: { duration: "240000" } }), { status: 200 }),
-    );
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    await hydrateApproximateListeningTimes(albums, "test-key");
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(albums[0]?.approximateListeningMs).toBe(240000);
-    fetchSpy.mockRestore();
-  });
-
-  it("does not retry missing durations before one hour", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(3_500_000);
-    window.localStorage.setItem(
-      "lastfm-collage-duration-cache",
-      JSON.stringify({
-        "artist one::track 1": {
-          duration: 0,
-          checkedAt: 1000,
-        },
-      }),
-    );
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    await hydrateApproximateListeningTimes(albums, "test-key");
-
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(albums[0]?.approximateListeningMs).toBe(0);
-    fetchSpy.mockRestore();
-  });
-
-  it("tries MusicBrainz for unresolved missing durations", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          recordings: [
-            {
-              title: "Track 1",
-              length: 181000,
-              score: "100",
-              releases: [{ title: "Album A" }],
-              "artist-credit": [{ name: "Artist One" }],
-            },
-          ],
-        }),
-        { status: 200 },
-      ),
-    );
-    const tracks = [
-      {
-        artist: "Artist One",
-        album: "Album A",
-        name: "Track 1",
-        plays: 1,
-        trackKey: "artist one::track 1",
-        checkedAt: 0,
-      },
-    ];
-
-    const result = await fetchMissingDurationsFromMusicBrainz(tracks);
-
-    expect(result.resolvedCount).toBe(1);
-    expect(result.missingDurations).toEqual([]);
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("musicbrainz.org/ws/2/recording"),
-      expect.objectContaining({
-        headers: {
-          Accept: "application/json",
-        },
-      }),
-    );
-    expect(
-      JSON.parse(window.localStorage.getItem("lastfm-collage-duration-cache") ?? "{}"),
-    ).toMatchObject({
-      "artist one::track 1": {
-        duration: 181000,
-      },
-    });
-
-    fetchSpy.mockRestore();
-  });
-
-  it("lists album track durations from the cache", () => {
-    window.localStorage.setItem(
-      "lastfm-collage-duration-cache",
-      JSON.stringify({
-        "artist one::track 1": {
-          duration: 181000,
-          checkedAt: 1000,
-        },
-      }),
-    );
-
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    expect(getAlbumTrackDurationEntries(albums[0] as AlbumEntry)).toEqual([
-      expect.objectContaining({
-        name: "Track 1",
-        durationMs: 181000,
-        checkedAt: 1000,
-      }),
-    ]);
-  });
-
-  it("refreshes album track durations from MusicBrainz", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          recordings: [
-            {
-              title: "Track 1",
-              length: 181000,
-              score: "100",
-              releases: [{ title: "Album A" }],
-              "artist-credit": [{ name: "Artist One" }],
-            },
-          ],
-        }),
-        { status: 200 },
-      ),
-    );
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    const result = await refreshAlbumTrackDurationsFromMusicBrainz(albums[0] as AlbumEntry);
-
-    expect(result.resolvedCount).toBe(1);
-    expect(getAlbumTrackDurationEntries(albums[0] as AlbumEntry)[0]?.durationMs).toBe(181000);
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("musicbrainz.org/ws/2/recording"),
-      expect.objectContaining({
-        headers: {
-          Accept: "application/json",
-        },
-      }),
-    );
-  });
-
-  it("tries MusicBrainz for unresolved missing artwork", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          releases: [
-            {
-              id: "release-123",
-              title: "Album A",
-              score: "100",
-              "cover-art-archive": { front: true },
-              "artist-credit": [{ name: "Artist One" }],
-            },
-          ],
-        }),
-        { status: 200 },
-      ),
-    );
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "" }],
-        date: { uts: "123" },
-      },
-    ]);
-    const missingArtwork = getMissingArtworkEntries(albums);
-
-    const result = await fetchMissingArtworkFromMusicBrainz(missingArtwork);
-
-    applyCachedArtwork(albums);
-
-    expect(result.resolvedCount).toBe(1);
-    expect(result.missingArtwork).toEqual([]);
-    expect(albums[0]?.imageUrl).toBe("https://coverartarchive.org/release/release-123/front");
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("musicbrainz.org/ws/2/release"),
-      expect.objectContaining({
-        headers: {
-          Accept: "application/json",
-        },
-      }),
-    );
-    expect(
-      JSON.parse(window.localStorage.getItem("lastfm-collage-artwork-cache") ?? "{}"),
-    ).toMatchObject({
-      "artist one::album a": {
-        imageUrl: "https://coverartarchive.org/release/release-123/front",
-      },
-    });
-
-    fetchSpy.mockRestore();
-  });
-
-  it("treats Last.fm placeholder artwork as missing", () => {
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [
-          {
-            "#text":
-              "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
-          },
-        ],
-        date: { uts: "123" },
-      },
-    ]);
-
-    expect(getMissingArtworkEntries(albums)).toEqual([
-      {
-        artist: "Artist One",
-        album: "Album A",
-        albumKey: "artist one::album a",
-        sourceArtist: "Artist One",
-        sourceAlbum: "Album A",
-        sourceKey: "artist one::album a",
-      },
-    ]);
-  });
-
-  it("builds MusicBrainz search URLs for tracks and albums", () => {
-    expect(
-      buildMusicBrainzTrackUrl({
-        artist: "Artist One",
-        album: "Album A",
-        name: "Track 1",
-        plays: 1,
-      }),
-    ).toBe(
-      "https://musicbrainz.org/search?query=Track+1+Artist+One+Album+A&type=recording&method=indexed",
-    );
-    expect(
-      buildLastFmAlbumUrl({
-        artist: "Artist One",
-        album: "Album A",
-      }),
-    ).toBe(
-      "https://www.last.fm/music/Artist%20One/Album%20A",
-    );
-    expect(
-      buildMusicBrainzAlbumUrl({
-        artist: "Artist One",
-        album: "Album A",
-      }),
-    ).toBe(
-      "https://musicbrainz.org/search?query=Album+A+Artist+One&type=release&method=indexed",
-    );
-  });
-
-  it("saves local artwork overrides into the artwork cache", () => {
-    saveAlbumArtworkOverride(
-      {
-        artist: "Artist One",
-        album: "Album A",
-        albumKey: "artist one::album a",
-      },
-      "https://example.com/override.jpg",
-    );
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    applyCachedArtwork(albums);
-
-    expect(albums[0]?.imageUrl).toBe("https://example.com/override.jpg");
-    expect(
-      JSON.parse(window.localStorage.getItem("lastfm-collage-artwork-cache") ?? "{}"),
-    ).toMatchObject({
-      "artist one::album a": {
-        imageUrl: "https://example.com/override.jpg",
-      },
-    });
-  });
-
-  it("persists album metadata overrides and reapplies them by source key", () => {
-    const albums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    saveAlbumOverride(albums[0] as AlbumEntry, {
-      album: "Album A (Cached)",
-      artist: "Artist One",
-      imageUrl: "https://example.com/cached.jpg",
-    });
-
-    const regeneratedAlbums = aggregateAlbums([
-      {
-        artist: { name: "Artist One" },
-        album: { "#text": "Album A" },
-        name: "Track 1",
-        image: [{ "#text": "https://example.com/a.jpg" }],
-        date: { uts: "123" },
-      },
-    ]);
-
-    applyCachedAlbumOverrides(regeneratedAlbums);
-
-    expect(regeneratedAlbums[0]).toMatchObject({
-      album: "Album A (Cached)",
-      artist: "Artist One",
-      imageUrl: "https://example.com/cached.jpg",
-    });
-  });
-
-  it("refreshes artwork from Last.fm before falling back to MusicBrainz", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            album: {
-              image: [{ "#text": "" }, { "#text": "https://example.com/from-lastfm.jpg" }],
-            },
-          }),
-          { status: 200 },
-        ),
-      );
-
-    const imageUrl = await refreshAlbumArtwork(
-      {
-        sourceArtist: "Artist One",
-        sourceAlbum: "Album A",
-      },
-      "test-key",
-    );
-
-    expect(imageUrl).toBe("https://example.com/from-lastfm.jpg");
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-    fetchSpy.mockReset();
-    fetchSpy
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            album: {
-              image: [
-                {
-                  "#text":
-                    "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png",
-                },
-              ],
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            releases: [
-              {
-                id: "release-123",
-                title: "Album A",
-                score: "100",
-                "cover-art-archive": { front: true },
-                "artist-credit": [{ name: "Artist One" }],
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-      );
-
-    const fallbackImageUrl = await refreshAlbumArtwork(
-      {
-        sourceArtist: "Artist One",
-        sourceAlbum: "Album A",
-      },
-      "test-key",
-    );
-
-    expect(fallbackImageUrl).toBe("https://coverartarchive.org/release/release-123/front");
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-  });
-
-  it("resumes recent track fetching from the last successful page", async () => {
-    window.localStorage.clear();
-    const timeRange = buildTimeRange("1m");
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-
-    fetchSpy
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist One" },
-                  album: { "#text": "Album A" },
-                  name: "Track 1",
-                  image: [{ "#text": "https://example.com/a.jpg" }],
-                  date: { uts: "123" },
-                },
-              ],
-              "@attr": { totalPages: "3" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockRejectedValueOnce(new Error("Network down"));
-
-    await expect(fetchRecentTracks("tommy", timeRange, "test-key")).rejects.toThrow("Network down");
-    expect(getRecentTracksResumeState("tommy", timeRange)).toEqual({
-      nextPage: 2,
-      totalPages: 3,
-    });
-
-    fetchSpy.mockReset();
-    fetchSpy
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist Two" },
-                  album: { "#text": "Album B" },
-                  name: "Track 2",
-                  image: [{ "#text": "https://example.com/b.jpg" }],
-                  date: { uts: "456" },
-                },
-              ],
-              "@attr": { totalPages: "3" },
-            },
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            recenttracks: {
-              track: [
-                {
-                  artist: { name: "Artist Three" },
-                  album: { "#text": "Album C" },
-                  name: "Track 3",
-                  image: [{ "#text": "https://example.com/c.jpg" }],
-                  date: { uts: "789" },
-                },
-              ],
-              "@attr": { totalPages: "3" },
-            },
-          }),
-          { status: 200 },
-        ),
-      );
-
-    const resumed = await fetchRecentTracks("tommy", timeRange, "test-key");
-
-    expect(fetchSpy).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining("page=2"),
-    );
-    expect(resumed.items).toHaveLength(3);
-    expect(getRecentTracksResumeState("tommy", timeRange)).toBeNull();
-
-    fetchSpy.mockRestore();
-  });
-
-  it("reuses cached recent tracks without refetching while the cache is fresh", async () => {
-    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
-    const timeRange = buildTimeRange("7d");
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          recenttracks: {
-            track: [
-              {
-                artist: { name: "Artist One" },
-                album: { "#text": "Album A" },
-                name: "Track 1",
-                image: [{ "#text": "https://example.com/a.jpg" }],
-                date: { uts: "123" },
-              },
-            ],
-            "@attr": { totalPages: "1" },
-          },
-        }),
-        { status: 200 },
-      ),
-    );
-
-    const first = await fetchRecentTracks("tommy", timeRange, "test-key");
-    expect(first.items).toHaveLength(1);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-    nowSpy.mockReturnValue(1_000_000 + 5 * 60 * 1000);
-
-    const second = await fetchRecentTracks("tommy", timeRange, "test-key");
-    expect(second.items).toHaveLength(1);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-    fetchSpy.mockRestore();
-  });
-
-  it("sorts by approximate listening time when requested", () => {
-    const albums: AlbumEntry[] = [
-      {
-        artist: "Artist One",
-        artistNames: new Set(["Artist One"]),
-        album: "Album A",
-        imageUrl: "",
-        playCount: 4,
-        approximateListeningMs: 2000,
-        sourceArtist: "Artist One",
-        sourceAlbum: "Album A",
-        sourceKey: "artist one::album a",
-        tracks: new Map(),
-      },
-      {
-        artist: "Artist Two",
-        artistNames: new Set(["Artist Two"]),
-        album: "Album B",
-        imageUrl: "",
-        playCount: 2,
-        approximateListeningMs: 4000,
-        sourceArtist: "Artist Two",
-        sourceAlbum: "Album B",
-        sourceKey: "artist two::album b",
-        tracks: new Map(),
-      },
-    ];
-
     const sorted = sortAlbums(albums, "listening-time");
-
-    expect(sorted[0]?.album).toBe("Album B");
+    expect(sorted[0]!.album).toBe("A");
+    expect(sorted[1]!.album).toBe("B");
   });
 
-  it("formats play metrics", () => {
-    const album: AlbumEntry = {
-      artist: "Artist",
-      artistNames: new Set(["Artist"]),
-      album: "Album",
-      imageUrl: "",
-      playCount: 12,
-      approximateListeningMs: 0,
-      sourceArtist: "Artist",
-      sourceAlbum: "Album",
-      sourceKey: "artist::album",
-      tracks: new Map(),
+  it("falls back to alphabetical when listening time is equal", () => {
+    const albums = [
+      makeAlbum({ artist: "Z", album: "Z", approximateListeningMs: 1000, playCount: 5 }),
+      makeAlbum({ artist: "A", album: "A", approximateListeningMs: 1000, playCount: 5 }),
+    ];
+    const sorted = sortAlbums(albums, "listening-time");
+    expect(sorted[0]!.album).toBe("A");
+  });
+});
+
+describe("formatMetric", () => {
+  it("formats plays correctly", () => {
+    const album = makeAlbum({ playCount: 1234 });
+    expect(formatMetric(album, "plays")).toBe("1,234 plays");
+  });
+
+  it("formats listening time in minutes when under an hour", () => {
+    const album = makeAlbum({ approximateListeningMs: 30 * 60 * 1000 });
+    expect(formatMetric(album, "listening-time")).toBe("30 min approx listening time");
+  });
+
+  it("formats listening time in hours and minutes", () => {
+    const album = makeAlbum({ approximateListeningMs: 90 * 60 * 1000 });
+    expect(formatMetric(album, "listening-time")).toBe("1 hr 30 min approx listening time");
+  });
+});
+
+describe("getMissingArtworkEntries", () => {
+  it("returns albums with no imageUrl", () => {
+    const album = makeAlbum({ imageUrl: "" });
+    expect(getMissingArtworkEntries([album])).toHaveLength(1);
+  });
+
+  it("does not return albums with a valid imageUrl", () => {
+    const album = makeAlbum({ imageUrl: "https://example.com/cover.jpg" });
+    expect(getMissingArtworkEntries([album])).toHaveLength(0);
+  });
+
+  it("returns albums with placeholder imageUrl", () => {
+    const album = makeAlbum({ imageUrl: "https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png" });
+    expect(getMissingArtworkEntries([album])).toHaveLength(1);
+  });
+});
+
+describe("applyCachedArtwork / saveAlbumOverride / applyCachedAlbumOverrides", () => {
+  it("applies a cached album override", () => {
+    const album = makeAlbum({ sourceKey: "override-test::override-album" });
+    saveAlbumOverride(album, { album: "New Title", artist: "New Artist", imageUrl: "https://example.com/new.jpg" });
+
+    const restored = makeAlbum({ sourceKey: "override-test::override-album" });
+    applyCachedAlbumOverrides([restored]);
+
+    expect(restored.album).toBe("New Title");
+    expect(restored.artist).toBe("New Artist");
+    expect(restored.imageUrl).toBe("https://example.com/new.jpg");
+  });
+});
+
+describe("createRequestScheduler", () => {
+  it("runs a task immediately when minIntervalMs is 0", async () => {
+    const scheduler = createRequestScheduler(0);
+    const result = await scheduler.schedule(() => Promise.resolve(42));
+    expect(result).toBe(42);
+  });
+
+  it("enforces minimum interval between tasks", async () => {
+    const timestamps: number[] = [];
+    let currentTime = 0;
+    const now = () => currentTime;
+    const sleep = (ms: number) => {
+      currentTime += ms;
+      return Promise.resolve();
     };
 
-    expect(formatMetric(album, "plays")).toBe("12 plays");
+    const scheduler = createRequestScheduler(100, { now, sleep });
+    await scheduler.schedule(() => Promise.resolve(timestamps.push(currentTime)));
+    await scheduler.schedule(() => Promise.resolve(timestamps.push(currentTime)));
+
+    expect(timestamps[1]! - timestamps[0]!).toBeGreaterThanOrEqual(100);
+  });
+});
+
+describe("fetchTopAlbums", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
   });
 
-  it("spaces scheduled Last.fm requests", async () => {
-    let currentTime = 0;
-    const startTimes: number[] = [];
-    const waits: number[] = [];
-    const scheduler = createRequestScheduler(1000, {
-      now: () => currentTime,
-      sleep: (milliseconds) => {
-        waits.push(milliseconds);
-        currentTime += milliseconds;
-        return Promise.resolve();
-      },
-    });
-
-    await Promise.all([
-      scheduler.schedule(() => {
-        startTimes.push(currentTime);
-        return Promise.resolve();
-      }),
-      scheduler.schedule(() => {
-        startTimes.push(currentTime);
-        return Promise.resolve();
-      }),
-      scheduler.schedule(() => {
-        startTimes.push(currentTime);
-        return Promise.resolve();
-      }),
-    ]);
-
-    expect(startTimes).toEqual([0, 1000, 2000]);
-    expect(waits).toEqual([1000, 1000]);
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
-  it("allows scheduled requests to overlap in flight", async () => {
-    let currentTime = 0;
-    const startTimes: number[] = [];
-    const completions: string[] = [];
-    const scheduler = createRequestScheduler(1000, {
-      now: () => currentTime,
-      sleep: (milliseconds) => {
-        currentTime += milliseconds;
-        return Promise.resolve();
+  it("fetches and returns albums from user.gettopalbums", async () => {
+    const mockResponse: LastFmTopAlbumsResponse = {
+      topalbums: {
+        album: [
+          {
+            name: "Album A",
+            playcount: "50",
+            artist: { name: "Artist One", "#text": "Artist One" },
+            image: [{ "#text": "https://example.com/a.jpg", size: "extralarge" }],
+          },
+          {
+            name: "Album B",
+            playcount: "30",
+            artist: { name: "Artist Two", "#text": "Artist Two" },
+            image: [{ "#text": "https://example.com/b.jpg", size: "extralarge" }],
+          },
+        ],
+        "@attr": { totalPages: "1" },
       },
-    });
+    };
 
-    let resolveFirst: (() => void) | undefined;
-    const first = scheduler.schedule(
-      () =>
-        new Promise<void>((resolve) => {
-          startTimes.push(currentTime);
-          resolveFirst = () => {
-            completions.push("first");
-            resolve();
-          };
-        }),
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify(mockResponse), { status: 200 }),
     );
-    const second = scheduler.schedule(() => {
-      startTimes.push(currentTime);
-      completions.push("second");
-      return Promise.resolve();
-    });
 
-    await second;
+    const albums = await fetchTopAlbums("tommy", "7d", "test-api-key");
 
-    expect(startTimes).toEqual([0, 1000]);
-    expect(completions).toEqual(["second"]);
+    expect(albums).toHaveLength(2);
+    expect(albums[0]!.album).toBe("Album A");
+    expect(albums[0]!.playCount).toBe(50);
+    expect(albums[1]!.album).toBe("Album B");
+    expect(albums[1]!.playCount).toBe(30);
+  });
 
-    resolveFirst?.();
-    await Promise.all([first, second]);
+  it("handles single album (non-array) response", async () => {
+    const mockResponse: LastFmTopAlbumsResponse = {
+      topalbums: {
+        album: {
+          name: "Solo Album",
+          playcount: "20",
+          artist: "Solo Artist",
+          image: [{ "#text": "https://example.com/solo.jpg" }],
+        },
+        "@attr": { totalPages: "1" },
+      },
+    };
 
-    expect(completions).toEqual(["second", "first"]);
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify(mockResponse), { status: 200 }),
+    );
+
+    const albums = await fetchTopAlbums("tommy", "7d", "test-api-key");
+    expect(albums).toHaveLength(1);
+    expect(albums[0]!.album).toBe("Solo Album");
   });
 });
