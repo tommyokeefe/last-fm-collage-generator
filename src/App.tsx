@@ -108,6 +108,8 @@ const toggleGroupClass =
   "inline-flex flex-wrap gap-2 rounded-[14px] border border-black/10 bg-foreground/[0.03] p-1.5 backdrop-blur-sm dark:border-emerald-600/30";
 const toggleButtonClass =
   "min-w-0 rounded-control border border-black/10 bg-transparent px-4 py-2.5 text-sm font-medium text-muted transition hover:-translate-y-px hover:border-black/15 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-emerald-600/30 dark:hover:border-emerald-600/30";
+const toggleButtonActiveClass =
+  "border-accent bg-accent font-semibold text-accent-foreground shadow-[0_12px_24px_rgb(var(--theme-shadow-color)/0.16)]";
 const themeToggleGroupClass = "flex flex-wrap items-center justify-center gap-1.5";
 const themeToggleButtonClass =
   "group flex h-9 w-9 items-center justify-center rounded border border-black/15 text-muted transition-colors hover:bg-black/5 hover:text-foreground focus-visible:bg-black/5 focus-visible:outline-none dark:border-emerald-600/30 dark:hover:bg-white/5 dark:hover:text-foreground dark:focus-visible:bg-white/5";
@@ -1344,7 +1346,7 @@ function App() {
                 {isBusy ? "Generating..." : "Generate collage"}
               </button>
               <button
-                className={classNames(secondaryButtonClass, "w-full")}
+                className={classNames(primaryButtonClass, "w-full")}
                 type="button"
                 onClick={() => void handleExport()}
                 disabled={!canExport}
@@ -1373,8 +1375,7 @@ function App() {
                   type="button"
                   className={classNames(
                     toggleButtonClass,
-                    previewMode === "config" &&
-                      "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                    previewMode === "config" && toggleButtonActiveClass,
                   )}
                   onClick={() => handlePreviewModeChange("config")}
                   aria-pressed={previewMode === "config"}
@@ -1385,8 +1386,7 @@ function App() {
                   type="button"
                   className={classNames(
                     toggleButtonClass,
-                    previewMode === "export" &&
-                      "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                    previewMode === "export" && toggleButtonActiveClass,
                   )}
                   onClick={() => handlePreviewModeChange("export")}
                   aria-pressed={previewMode === "export"}
@@ -1398,8 +1398,7 @@ function App() {
                     type="button"
                     className={classNames(
                       toggleButtonClass,
-                      previewMode === "missing-data" &&
-                        "bg-surface-muted text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]",
+                      previewMode === "missing-data" && toggleButtonActiveClass,
                     )}
                     onClick={() => handlePreviewModeChange("missing-data")}
                     aria-pressed={previewMode === "missing-data"}
