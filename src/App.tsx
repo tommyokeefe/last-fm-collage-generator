@@ -1321,8 +1321,8 @@ function AlbumEditModal({
             role="tab"
             aria-selected={activeTab === "details"}
             className={classNames(
-              secondaryButtonClass,
-              activeTab === "details" && "border-accent bg-foreground/8",
+              toggleButtonBaseClass,
+              activeTab === "details" ? toggleButtonActiveClass : toggleButtonInactiveClass,
             )}
             onClick={() => onTabChange("details")}
           >
@@ -1333,8 +1333,8 @@ function AlbumEditModal({
             role="tab"
             aria-selected={activeTab === "tracks"}
             className={classNames(
-              secondaryButtonClass,
-              activeTab === "tracks" && "border-accent bg-foreground/8",
+              toggleButtonBaseClass,
+              activeTab === "tracks" ? toggleButtonActiveClass : toggleButtonInactiveClass,
             )}
             onClick={() => onTabChange("tracks")}
           >
