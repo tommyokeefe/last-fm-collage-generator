@@ -229,6 +229,7 @@ function App() {
   const [isGeneratingExportPreview, setIsGeneratingExportPreview] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("config");
   const [viewRefreshKey, setViewRefreshKey] = useState(0);
+  const [showListeningTimeInfo, setShowListeningTimeInfo] = useState(false);
   const [resultsCopy, setResultsCopy] = useState(
     "Your collage will appear here after generation.",
   );
@@ -1050,7 +1051,16 @@ function App() {
                   onChange={(event) => handleRankingModeChange(event.target.value as RankingMode)}
                   disabled={isBusy}
                 />
-                <span>Approximate listening time per album</span>
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>Approximate listening time per album</span>
+                  <button
+                    type="button"
+                    className="text-sm text-accent underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onClick={() => setShowListeningTimeInfo(true)}
+                  >
+                    How is this calculated?
+                  </button>
+                </span>
               </label>
             </fieldset>
 
@@ -1209,6 +1219,9 @@ function App() {
           onSave={handleAlbumEditSave}
         />
       ) : null}
+      {showListeningTimeInfo ? (
+        <ListeningTimeInfoModal onClose={() => setShowListeningTimeInfo(false)} />
+      ) : null}
       {isProgressOverlayVisible ? <ProgressOverlay status={status} /> : null}
     </div>
   );
@@ -1308,6 +1321,86 @@ function ProgressOverlay({ status }: ProgressOverlayProps) {
 interface SummaryPanelProps {
   summary: SummaryState | null;
 }
+
+function ListeningTimeInfoModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-20 grid place-items-center overflow-y-auto bg-surface-backdrop/80 p-4"
+      role="presentation"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className={`max-h-[calc(100vh-2rem)] w-full max-w-[640px] overflow-y-auto rounded-panel border ${edgeBorderClass} bg-surface p-5 shadow-surface [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-surface))]`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="How is approximate listening time calculated?"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <h2 className="text-2xl font-semibold text-foreground">How is this calculated?</h2>
+          <button type="button" className={secondaryButtonClass} onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-5 text-muted">
+          <section className="grid gap-2">
+            <h3 className="font-semibold text-foreground">The formula</h3>
+            <p>
+              For each album, we estimate how many times you&apos;ve played it through completely
+              by dividing your scrobble count by the album&apos;s track count. That fraction is
+              then multiplied by the album&apos;s total runtime to get approximate listening time.
+            </p>
+            <p className="rounded-xl bg-foreground/[0.04] px-4 py-3 font-mono text-sm">
+              (scrobbles ÷ track count) × album runtime
+            </p>
+            <p>
+              For example, if you have 15 scrobbles for a 10-track album that runs 45 minutes,
+              that&apos;s 1.5 full plays — roughly 67 minutes of listening time.
+            </p>
+          </section>
+
+          <section className="grid gap-2">
+            <h3 className="font-semibold text-foreground">What data is needed</h3>
+            <p>
+              Each album requires a track count and total runtime. These aren&apos;t included in
+              the standard Last.fm top albums response, so you&apos;ll need to provide them — either
+              by fetching from Last.fm or entering them manually.
+            </p>
+          </section>
+
+          <section className="grid gap-2">
+            <h3 className="font-semibold text-foreground">How to fill in missing data</h3>
+            <ol className="grid list-decimal gap-2 pl-5">
+              <li>
+                Generate your collage in <strong className="text-foreground">Approximate listening time</strong> mode.
+                A <strong className="text-foreground">Missing data</strong> tab will appear in the results panel
+                listing any albums that need track count and duration info.
+              </li>
+              <li>
+                Click an album in that list to open the edit panel, then switch to
+                the <strong className="text-foreground">Listening time</strong> tab.
+              </li>
+              <li>
+                Click <strong className="text-foreground">Fetch from Last.fm</strong> to try auto-populating
+                the track count and album duration from Last.fm&apos;s album info.
+              </li>
+              <li>
+                If the fetch doesn&apos;t return data (or returns incorrect data), you can enter the
+                values manually — track count and duration in <strong className="text-foreground">mm:ss</strong> format.
+                Wikipedia or the album&apos;s back cover are good references.
+              </li>
+              <li>
+                Click <strong className="text-foreground">Save changes</strong> when done. The collage will
+                update automatically.
+              </li>
+            </ol>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 interface AlbumEditModalProps {
   album: AlbumEntry;
