@@ -1344,7 +1344,7 @@ function App() {
                 {isBusy ? "Generating..." : "Generate collage"}
               </button>
               <button
-                className={classNames(secondaryButtonClass, "w-full")}
+                className={classNames(primaryButtonClass, "w-full")}
                 type="button"
                 onClick={() => void handleExport()}
                 disabled={!canExport}
