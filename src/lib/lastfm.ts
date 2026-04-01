@@ -363,6 +363,30 @@ export async function refreshAlbumArtwork(
   return "";
 }
 
+export async function fetchAlbumMetadata(
+  album: Pick<AlbumEntry, "sourceArtist" | "sourceAlbum">,
+  apiKey: string,
+): Promise<{ trackCount: number; albumDurationMs: number } | null> {
+  const payload = await callLastFm<LastFmAlbumInfoResponse>("album.getinfo", {
+    artist: album.sourceArtist,
+    album: album.sourceAlbum,
+    autocorrect: "1",
+  }, apiKey);
+
+  const rawTracks = payload.album?.tracks?.track;
+  if (!rawTracks) return null;
+
+  const tracks = Array.isArray(rawTracks) ? rawTracks : [rawTracks];
+  if (tracks.length === 0) return null;
+
+  const albumDurationMs = tracks.reduce((total, track) => {
+    const durationSec = Number(track.duration ?? 0);
+    return total + (Number.isFinite(durationSec) ? durationSec * 1000 : 0);
+  }, 0);
+
+  return { trackCount: tracks.length, albumDurationMs };
+}
+
 export function sortAlbums(albums: AlbumEntry[], rankingMode: RankingMode): AlbumEntry[] {
   return [...albums].sort((left, right) => {
     if (rankingMode === "listening-time") {

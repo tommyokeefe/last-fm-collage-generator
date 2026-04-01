@@ -12,6 +12,7 @@ import {
   applyCachedArtwork,
   buildLastFmAlbumUrl,
   computeListeningTimes,
+  fetchAlbumMetadata,
   getMissingAlbumMetadataEntries,
   getMissingArtworkEntries,
   fetchTopAlbums,
@@ -220,6 +221,7 @@ function App() {
   const [albumEditDraft, setAlbumEditDraft] = useState<AlbumEditDraft | null>(null);
   const [albumEditTab, setAlbumEditTab] = useState<AlbumEditTab>("details");
   const [isRefreshingAlbumArtwork, setIsRefreshingAlbumArtwork] = useState(false);
+  const [isFetchingAlbumInfo, setIsFetchingAlbumInfo] = useState(false);
   const [missingArtwork, setMissingArtwork] = useState<MissingArtworkEntry[]>([]);
   const [missingAlbumMetadata, setMissingAlbumMetadata] = useState<AlbumEntry[]>([]);
   const [exportPreviewBlob, setExportPreviewBlob] = useState<Blob | null>(null);
@@ -358,7 +360,7 @@ function App() {
   }, [exportPreviewUrl]);
 
   const canExport = !isBusy && renderedAlbums.length > 0;
-  const isProgressOverlayVisible = isBusy || isRefreshingAlbumArtwork;
+  const isProgressOverlayVisible = isBusy || isRefreshingAlbumArtwork || isFetchingAlbumInfo;
 
   function requestViewRefresh() {
     setViewRefreshKey((current) => current + 1);
@@ -877,6 +879,43 @@ function App() {
     }
   }
 
+  async function handleFetchAlbumInfo() {
+    const apiKey = getApiKey();
+    if (!editingAlbum || !apiKey) return;
+    setIsFetchingAlbumInfo(true);
+    try {
+      const result = await fetchAlbumMetadata(editingAlbum, apiKey);
+      if (!result) {
+        setStatus({ tone: "error", message: "No track data found for this album." });
+        return;
+      }
+      const durationMins = Math.floor(result.albumDurationMs / 60000);
+      const durationSecs = Math.floor((result.albumDurationMs % 60000) / 1000);
+      const durationStr = `${durationMins}:${String(durationSecs).padStart(2, "0")}`;
+      setAlbumEditDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              trackCountInput: String(result.trackCount),
+              albumDurationInput: durationStr,
+            }
+          : prev,
+      );
+      setStatus({
+        tone: "success",
+        message: `Found ${result.trackCount} tracks for ${editingAlbum.album}.`,
+      });
+    } catch (error) {
+      console.error(error);
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Failed to fetch album info.",
+      });
+    } finally {
+      setIsFetchingAlbumInfo(false);
+    }
+  }
+
   function setNextExportPreview(nextBlob: Blob | null) {
     setExportPreviewBlob(nextBlob);
     setExportPreviewUrl((currentUrl) => {
@@ -1150,6 +1189,7 @@ function App() {
           draft={albumEditDraft}
           album={editingAlbum}
           activeTab={albumEditTab}
+          isFetchingAlbumInfo={isFetchingAlbumInfo}
           isRefreshingArtwork={isRefreshingAlbumArtwork}
           onChange={(key, value) =>
             setAlbumEditDraft((current) =>
@@ -1162,6 +1202,7 @@ function App() {
             )
           }
           onClose={handleAlbumEditClose}
+          onFetchAlbumInfo={() => void handleFetchAlbumInfo()}
           onRemoveAlbum={handleAlbumRemove}
           onRefreshArtwork={() => void handleAlbumArtworkRefresh()}
           onTabChange={(nextTab) => handleAlbumEditTabChange(nextTab)}
@@ -1272,9 +1313,11 @@ interface AlbumEditModalProps {
   album: AlbumEntry;
   activeTab: AlbumEditTab;
   draft: AlbumEditDraft;
+  isFetchingAlbumInfo: boolean;
   isRefreshingArtwork: boolean;
   onChange: (key: keyof AlbumEditDraft, value: string) => void;
   onClose: () => void;
+  onFetchAlbumInfo: () => void;
   onRefreshArtwork: () => void;
   onRemoveAlbum: () => void;
   onTabChange: (nextTab: AlbumEditTab) => void;
@@ -1285,9 +1328,11 @@ function AlbumEditModal({
   album,
   activeTab,
   draft,
+  isFetchingAlbumInfo,
   isRefreshingArtwork,
   onChange,
   onClose,
+  onFetchAlbumInfo,
   onRefreshArtwork,
   onRemoveAlbum,
   onTabChange,
@@ -1431,6 +1476,16 @@ function AlbumEditModal({
                   onChange={(event) => onChange("albumDurationInput", event.target.value)}
                 />
               </label>
+            </div>
+            <div>
+              <button
+                className={secondaryButtonClass}
+                type="button"
+                disabled={isFetchingAlbumInfo}
+                onClick={onFetchAlbumInfo}
+              >
+                {isFetchingAlbumInfo ? "Fetching…" : "Fetch from Last.fm"}
+              </button>
             </div>
           </div>
         )}

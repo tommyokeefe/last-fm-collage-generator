@@ -82,6 +82,9 @@ export type LastFmTextField =
 export interface LastFmAlbumInfoResponse {
   album?: {
     image?: LastFmImage[];
+    tracks?: {
+      track?: Array<{ duration?: string | number }> | { duration?: string | number };
+    };
   };
 }
 
