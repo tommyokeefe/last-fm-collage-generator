@@ -21,7 +21,9 @@ const LASTFM_PLACEHOLDER_IMAGE_MARKERS = [
 const ALBUM_OVERRIDE_CACHE_KEY = "lastfm-collage-album-override-cache";
 const ALBUM_METADATA_CACHE_KEY = "lastfm-collage-album-metadata-cache";
 const ARTWORK_CACHE_KEY = "lastfm-collage-artwork-cache";
+const TOP_ALBUMS_CACHE_KEY = "lastfm-collage-top-albums-cache";
 const LASTFM_MIN_REQUEST_INTERVAL_MS = 1000;
+const TOP_ALBUMS_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 const PERIOD_BY_RANGE: Record<TimeRangeValue, string> = {
   "7d": "7day",
@@ -48,6 +50,20 @@ interface AlbumMetadataCacheEntry extends AlbumMetadata {
   checkedAt: number;
 }
 
+interface TopAlbumsCacheEntry {
+  queryKey: string;
+  cachedAt: number;
+  albums: Array<{
+    artist: string;
+    album: string;
+    imageUrl: string;
+    playCount: number;
+    sourceArtist: string;
+    sourceAlbum: string;
+    sourceKey: string;
+  }>;
+}
+
 const albumOverrideCache = loadAlbumOverrideCache();
 const artworkCache = loadArtworkCache();
 const albumMetadataCache = loadAlbumMetadataCache();
@@ -62,6 +78,21 @@ export async function fetchTopAlbums(
   onStatus?: (message: string) => void,
   onProgress?: (progress: FetchProgressState) => void,
 ): Promise<AlbumEntry[]> {
+  const queryKey = `${normalizeForKey(username)}::${timeRangeValue}`;
+  const cached = import.meta.env.MODE !== "test"
+    ? loadTopAlbumsCacheEntry(queryKey)
+    : null;
+  if (cached && Date.now() - cached.cachedAt <= TOP_ALBUMS_CACHE_MAX_AGE_MS) {
+    onStatus?.("Using cached top albums from Last.fm.");
+    return cached.albums.map((entry) => ({
+      ...entry,
+      artistNames: new Set([entry.artist]),
+      approximateListeningMs: 0,
+      trackCount: null,
+      albumDurationMs: null,
+    }));
+  }
+
   const period = PERIOD_BY_RANGE[timeRangeValue];
   const albums = new Map<string, AlbumEntry>();
   let page = 1;
@@ -113,7 +144,21 @@ export async function fetchTopAlbums(
     page += 1;
   } while (page <= totalPages);
 
-  return [...albums.values()];
+  const result = [...albums.values()];
+  persistTopAlbumsCacheEntry({
+    queryKey,
+    cachedAt: Date.now(),
+    albums: result.map((a) => ({
+      artist: a.artist,
+      album: a.album,
+      imageUrl: a.imageUrl,
+      playCount: a.playCount,
+      sourceArtist: a.sourceArtist,
+      sourceAlbum: a.sourceAlbum,
+      sourceKey: a.sourceKey,
+    })),
+  });
+  return result;
 }
 
 export function computeListeningTimes(albums: AlbumEntry[]): void {
@@ -537,6 +582,34 @@ function persistAlbumOverrideCache(cache: Record<string, AlbumOverrideCacheEntry
 
 function persistAlbumMetadataCache(cache: Record<string, AlbumMetadataCacheEntry>): void {
   window.localStorage.setItem(ALBUM_METADATA_CACHE_KEY, JSON.stringify(cache));
+}
+
+function loadTopAlbumsCacheEntry(queryKey: string): TopAlbumsCacheEntry | null {
+  try {
+    const raw = window.localStorage.getItem(TOP_ALBUMS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const entry = (parsed as Record<string, unknown>)[queryKey];
+    if (!entry || typeof entry !== "object") return null;
+    const e = entry as Partial<TopAlbumsCacheEntry>;
+    if (e.queryKey !== queryKey || !Array.isArray(e.albums) || typeof e.cachedAt !== "number") return null;
+    return { queryKey: e.queryKey, cachedAt: e.cachedAt, albums: e.albums };
+  } catch {
+    return null;
+  }
+}
+
+function persistTopAlbumsCacheEntry(entry: TopAlbumsCacheEntry): void {
+  try {
+    const raw = window.localStorage.getItem(TOP_ALBUMS_CACHE_KEY);
+    const cache: Record<string, TopAlbumsCacheEntry> =
+      raw ? (JSON.parse(raw) as Record<string, TopAlbumsCacheEntry>) : {};
+    cache[entry.queryKey] = entry;
+    window.localStorage.setItem(TOP_ALBUMS_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // ignore storage errors
+  }
 }
 
 function syncArtworkCacheFromStorage(): void {
