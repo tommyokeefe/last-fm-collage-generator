@@ -830,6 +830,34 @@ function App() {
       saveAlbumMetadata(editingAlbum, { trackCount, albumDurationMs });
       editingAlbum.trackCount = trackCount;
       editingAlbum.albumDurationMs = albumDurationMs;
+
+      // Patch the metadata into all other cached results that contain this album
+      // so switching time ranges doesn't show stale null values.
+      setGeneratedResultCache((current) => {
+        const sourceKey = editingAlbum.sourceKey;
+        const updated: typeof current = {};
+        for (const [key, cached] of Object.entries(current)) {
+          const patchedAlbums = cached.albums.map((a) => {
+            if (a.sourceKey !== sourceKey) return a;
+            const patched = { ...a, trackCount, albumDurationMs };
+            if (cached.query.rankingMode === "listening-time" && trackCount > 0 && albumDurationMs > 0) {
+              patched.approximateListeningMs = (a.playCount / trackCount) * albumDurationMs;
+            }
+            return patched;
+          });
+
+          const patchedMissingMetadata = cached.missingAlbumMetadata.filter(
+            (a) => a.sourceKey !== sourceKey,
+          );
+
+          updated[key] = {
+            ...cached,
+            albums: patchedAlbums,
+            missingAlbumMetadata: patchedMissingMetadata,
+          };
+        }
+        return updated;
+      });
     }
 
     saveAlbumOverride(editingAlbum, trimmedDraft);
