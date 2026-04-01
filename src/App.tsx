@@ -1710,13 +1710,8 @@ function PreviewGrid({
 
   if (albums.length === 0) {
     return (
-      <div
-        className="mt-5 grid gap-3 [grid-template-columns:repeat(var(--columns),minmax(0,1fr))] max-sm:grid-cols-2"
-        style={style}
-      >
-        <div className={emptyStateClass}>
-          <p>No collage generated yet.</p>
-        </div>
+      <div className={classNames(emptyStateClass, "mt-5")}>
+        <p>No collage generated yet.</p>
       </div>
     );
   }
