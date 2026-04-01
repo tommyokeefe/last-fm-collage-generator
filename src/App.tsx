@@ -106,8 +106,10 @@ const primaryButtonClass =
   "inline-flex min-h-12 items-center justify-center rounded-control border border-accent bg-accent px-4 py-[0.85rem] text-sm font-semibold text-accent-foreground shadow-[0_12px_24px_rgb(var(--theme-shadow-color)/0.16)] transition hover:-translate-y-px hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
 const toggleGroupClass =
   "inline-flex flex-wrap gap-2 rounded-[14px] border border-black/10 bg-foreground/[0.03] p-1.5 backdrop-blur-sm dark:border-emerald-600/30";
-const toggleButtonClass =
-  "min-w-0 rounded-control border border-black/10 bg-transparent px-4 py-2.5 text-sm font-medium text-muted transition hover:-translate-y-px hover:border-black/15 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-emerald-600/30 dark:hover:border-emerald-600/30";
+const toggleButtonBaseClass =
+  "min-w-0 rounded-control border px-4 py-2.5 text-sm font-medium transition hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+const toggleButtonInactiveClass =
+  "border-black/10 bg-transparent text-muted hover:border-black/15 hover:text-foreground dark:border-emerald-600/30 dark:hover:border-emerald-600/30";
 const toggleButtonActiveClass =
   "border-accent bg-accent font-semibold text-accent-foreground shadow-[0_12px_24px_rgb(var(--theme-shadow-color)/0.16)]";
 const themeToggleGroupClass = "flex flex-wrap items-center justify-center gap-1.5";
@@ -1374,8 +1376,8 @@ function App() {
                 <button
                   type="button"
                   className={classNames(
-                    toggleButtonClass,
-                    previewMode === "config" && toggleButtonActiveClass,
+                    toggleButtonBaseClass,
+                    previewMode === "config" ? toggleButtonActiveClass : toggleButtonInactiveClass,
                   )}
                   onClick={() => handlePreviewModeChange("config")}
                   aria-pressed={previewMode === "config"}
@@ -1385,8 +1387,8 @@ function App() {
                 <button
                   type="button"
                   className={classNames(
-                    toggleButtonClass,
-                    previewMode === "export" && toggleButtonActiveClass,
+                    toggleButtonBaseClass,
+                    previewMode === "export" ? toggleButtonActiveClass : toggleButtonInactiveClass,
                   )}
                   onClick={() => handlePreviewModeChange("export")}
                   aria-pressed={previewMode === "export"}
@@ -1397,8 +1399,8 @@ function App() {
                   <button
                     type="button"
                     className={classNames(
-                      toggleButtonClass,
-                      previewMode === "missing-data" && toggleButtonActiveClass,
+                      toggleButtonBaseClass,
+                      previewMode === "missing-data" ? toggleButtonActiveClass : toggleButtonInactiveClass,
                     )}
                     onClick={() => handlePreviewModeChange("missing-data")}
                     aria-pressed={previewMode === "missing-data"}
