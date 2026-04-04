@@ -94,7 +94,7 @@ const toggleButtonActiveClass =
   "border-accent bg-accent font-semibold text-accent-foreground";
 const themeToggleGroupClass = "flex flex-wrap items-center justify-center gap-1.5";
 const themeToggleButtonClass =
-  "group flex h-9 w-9 items-center justify-center rounded border border-black/15 text-muted transition-colors hover:bg-black/5 hover:text-foreground focus-visible:bg-black/5 focus-visible:outline-none dark:border-emerald-600/30 dark:hover:bg-white/5 dark:hover:text-foreground dark:focus-visible:bg-white/5";
+  "group flex h-9 w-9 items-center justify-center rounded border border-black/15 bg-surface text-muted transition-colors hover:bg-black/5 hover:text-foreground focus-visible:bg-black/5 focus-visible:outline-none dark:border-white/15 dark:bg-surface dark:hover:bg-white/5 dark:hover:text-foreground dark:focus-visible:bg-white/5";
 const emptyStateClass =
   "grid min-h-[260px] place-items-center rounded-[18px] border border-dashed border-border/12 bg-foreground/[0.03] text-muted [background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent),rgb(var(--theme-foreground)/0.03)]";
 const themeIconClass =
@@ -956,41 +956,75 @@ function App() {
     });
   }
 
+  const headerRef = useRef<HTMLElement>(null);
+  const accentIndexRef = useRef<number>(Math.floor(Math.random() * 3));
+
+  useEffect(() => {
+    const gradients = [
+      { light: "linear-gradient(135deg, #FFFFFF 0% 30%, #00FFFF 55% 100%)", dark: "linear-gradient(135deg, #000000 0% 30%, #00BFBF 55% 100%)", shadowDark: "rgb(0 255 255 / 0.2)" },
+      { light: "linear-gradient(135deg, #FFFFFF 0% 30%, #FF00FF 55% 100%)", dark: "linear-gradient(135deg, #000000 0% 30%, #BF00BF 55% 100%)", shadowDark: "rgb(0 255 255 / 0.2)" },
+      { light: "linear-gradient(135deg, #FFFFFF 0% 30%, #FFFF00 55% 100%)", dark: "linear-gradient(135deg, #000000 0% 30%, #BFBF00 55% 100%)", shadowDark: "rgb(0 255 255 / 0.2)" },
+    ];
+
+    function applyGradient() {
+      const el = headerRef.current;
+      if (!el) return;
+      const isDark = document.documentElement.classList.contains("dark");
+      const g = gradients[accentIndexRef.current];
+      el.style.background = isDark ? g.dark : g.light;
+      el.style.color = isDark ? "white" : "black";
+      el.style.boxShadow = isDark ? `0 4px 24px ${g.shadowDark}` : "0 4px 24px rgb(0 0 0 / 0.2)";
+      const h1 = el.querySelector("h1") as HTMLElement | null;
+      if (h1) h1.style.textShadow = isDark ? "0 2px 3px rgb(0 0 0 / 0.6)" : "0 2px 3px rgb(255 255 255 / 0.9)";
+    }
+
+    applyGradient();
+    const observer = new MutationObserver(applyGradient);
+    observer.observe(document.documentElement, { attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className="mx-auto min-h-screen w-[min(1200px,calc(100%-2rem))] py-8 max-sm:w-[min(100%-1rem,100%)]">
-      <header className="mb-8 flex items-start justify-between gap-4 max-lg:flex-col max-lg:items-stretch">
-        <div className="grid gap-3">
-          <h1 className="text-[clamp(2rem,3vw,3rem)]">Last.fm Collage Generator</h1>
-          <p className="max-w-[64ch] text-muted">
-            Last FM album cover collage generation based on play count or
-            approximate listening time.
-          </p>
-        </div>
-        <div className="flex justify-end">
-          <div className={themeToggleGroupClass} role="group" aria-label="Theme mode">
-            {THEME_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={classNames(
-                  themeToggleButtonClass,
-                  themePreference === option.value &&
-                    "bg-black/5 text-foreground dark:bg-white/5",
-                )}
-                aria-label={`${option.label} theme`}
-                aria-pressed={themePreference === option.value}
-                onClick={() => {
-                  setThemePreference(option.value);
-                  setThemePreferenceState(option.value);
-                }}
-              >
-                <ThemeIcon theme={option.value} />
-                <span className="sr-only">{option.label}</span>
-              </button>
-            ))}
+    <div>
+      <header
+        ref={headerRef}
+        className="mb-8 w-full px-4 py-6 shadow-md"
+      >
+        <div className="mx-auto flex w-[min(1200px,calc(100%-2rem))] items-start justify-between gap-4 max-lg:flex-col max-lg:items-stretch max-sm:w-[min(100%-1rem,100%)]">
+          <div className="grid gap-3">
+            <h1 className="text-[clamp(2rem,3vw,3rem)]">Last.fm Collage Generator</h1>
+            <p className="max-w-[64ch] text-muted">
+              Last FM album cover collage generation based on play count or
+              approximate listening time.
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <div className={themeToggleGroupClass} role="group" aria-label="Theme mode">
+              {THEME_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={classNames(
+                    themeToggleButtonClass,
+                    themePreference === option.value &&
+                      "bg-black/5 text-foreground dark:bg-white/5",
+                  )}
+                  aria-label={`${option.label} theme`}
+                  aria-pressed={themePreference === option.value}
+                  onClick={() => {
+                    setThemePreference(option.value);
+                    setThemePreferenceState(option.value);
+                  }}
+                >
+                  <ThemeIcon theme={option.value} />
+                  <span className="sr-only">{option.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </header>
+      <div className="mx-auto min-h-screen w-[min(1200px,calc(100%-2rem))] pb-8 max-sm:w-[min(100%-1rem,100%)]">
 
       <main className="grid gap-6 lg:grid-cols-[minmax(290px,380px)_minmax(0,1fr)]">
         <section className={sectionPanelClass}>
@@ -1251,6 +1285,7 @@ function App() {
         <ListeningTimeInfoModal onClose={() => setShowListeningTimeInfo(false)} />
       ) : null}
       {isProgressOverlayVisible ? <ProgressOverlay status={status} /> : null}
+      </div>
     </div>
   );
 }
