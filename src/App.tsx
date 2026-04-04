@@ -83,7 +83,7 @@ const fieldClass =
 const secondaryButtonClass =
   `inline-flex min-h-12 items-center justify-center rounded-control border ${softBorderClass} bg-surface-muted px-4 py-[0.85rem] text-sm font-medium text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:-translate-y-px hover:border-black/15 dark:hover:border-white/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55`;
 const primaryButtonClass =
-  "inline-flex min-h-12 items-center justify-center rounded-control border border-accent bg-accent px-4 py-[0.85rem] text-sm font-semibold text-accent-foreground shadow-[0_12px_24px_rgb(var(--theme-shadow-color)/0.16)] transition hover:-translate-y-px hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
+  "inline-flex min-h-12 items-center justify-center rounded-control border border-accent bg-accent px-4 py-[0.85rem] text-sm font-semibold text-accent-foreground transition hover:-translate-y-px hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-55";
 const toggleGroupClass =
   "inline-flex flex-wrap gap-2 rounded-[14px] border border-black/10 bg-foreground/[0.03] p-1.5 backdrop-blur-sm dark:border-emerald-600/30";
 const toggleButtonBaseClass =
@@ -91,7 +91,7 @@ const toggleButtonBaseClass =
 const toggleButtonInactiveClass =
   "border-black/10 bg-transparent text-muted hover:border-black/15 hover:text-foreground dark:border-emerald-600/30 dark:hover:border-emerald-600/30";
 const toggleButtonActiveClass =
-  "border-accent bg-accent font-semibold text-accent-foreground shadow-[0_12px_24px_rgb(var(--theme-shadow-color)/0.16)]";
+  "border-accent bg-accent font-semibold text-accent-foreground";
 const themeToggleGroupClass = "flex flex-wrap items-center justify-center gap-1.5";
 const themeToggleButtonClass =
   "group flex h-9 w-9 items-center justify-center rounded border border-black/15 text-muted transition-colors hover:bg-black/5 hover:text-foreground focus-visible:bg-black/5 focus-visible:outline-none dark:border-emerald-600/30 dark:hover:bg-white/5 dark:hover:text-foreground dark:focus-visible:bg-white/5";
@@ -1549,7 +1549,7 @@ function AlbumEditModal({
               </label>
               <div className="flex flex-wrap items-center gap-3">
                 <a
-                  className={secondaryButtonClass}
+                  className={primaryButtonClass}
                   href={buildLastFmAlbumUrl({
                     artist: album.sourceArtist,
                     album: album.sourceAlbum,
@@ -1559,10 +1559,10 @@ function AlbumEditModal({
                 >
                   Update artwork on Last.fm
                 </a>
-                <button className={secondaryButtonClass} type="button" onClick={onRefreshArtwork} disabled={isRefreshingArtwork}>
+                <button className={primaryButtonClass} type="button" onClick={onRefreshArtwork} disabled={isRefreshingArtwork}>
                   {isRefreshingArtwork ? "Refreshing image..." : "Refresh image"}
                 </button>
-                <button className={secondaryButtonClass} type="button" onClick={onRemoveAlbum}>
+                <button className={primaryButtonClass} type="button" onClick={onRemoveAlbum}>
                   Remove album from collage
                 </button>
               </div>
@@ -1600,7 +1600,7 @@ function AlbumEditModal({
             </div>
             <div>
               <button
-                className={secondaryButtonClass}
+                className={primaryButtonClass}
                 type="button"
                 disabled={isFetchingAlbumInfo}
                 onClick={onFetchAlbumInfo}
