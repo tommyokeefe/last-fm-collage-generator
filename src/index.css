@@ -28,11 +28,11 @@
 
   input[type="checkbox"],
   input[type="radio"] {
-    accent-color: rgb(59 130 246);
+    accent-color: rgb(var(--theme-accent));
   }
 
   progress {
-    color: rgb(59 130 246);
+    color: rgb(var(--theme-accent));
   }
 
   progress::-webkit-progress-bar {
@@ -41,12 +41,12 @@
   }
 
   progress::-webkit-progress-value {
-    background-color: rgb(59 130 246);
+    background-color: rgb(var(--theme-accent));
     border-radius: 9999px;
   }
 
   progress::-moz-progress-bar {
-    background-color: rgb(59 130 246);
+    background-color: rgb(var(--theme-accent));
     border-radius: 9999px;
   }
 
