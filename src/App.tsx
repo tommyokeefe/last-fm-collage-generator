@@ -1083,7 +1083,7 @@ function App() {
                   <span>Approximate listening time per album</span>
                   <button
                     type="button"
-                    className="text-sm text-accent underline underline-offset-2 hover:no-underline [text-shadow:0_1px_4px_rgb(0_0_0/0.5)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    className="text-sm text-foreground decoration-accent underline underline-offset-2 hover:no-underline dark:text-accent dark:[text-shadow:none] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                     onClick={() => setShowListeningTimeInfo(true)}
                   >
                     How is this calculated?
